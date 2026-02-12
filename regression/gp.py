@@ -1,5 +1,7 @@
 import argparse
 import sys
+import os
+import os.path as osp
 import yaml
 import torch
 import numpy as np
@@ -78,8 +80,8 @@ def main():
     else:
         args.root = osp.join(results_path, 'gp', args.model)
 
-    model_cls = getattr(load_module(f'models/{args.model}.py'), args.model.upper())
-    with open(f'configs/gp/{args.model}.yaml', 'r') as f:
+    model_cls = getattr(load_module(osp.join(osp.dirname(__file__), 'models', f'{args.model}.py')), args.model.upper())
+    with open(osp.join(osp.dirname(__file__), 'configs', 'gp', f'{args.model}.yaml'), 'r') as f:
         config = yaml.safe_load(f)
 
     device = get_device(args.no_cuda)
@@ -115,7 +117,7 @@ def train(args, model, device):
     path, filename = get_eval_path(args)
     if not osp.isfile(osp.join(path, filename)):
         print('generating evaluation sets...')
-        gen_evalset(args)
+        gen_evalset(args, device)
 
     torch.manual_seed(args.train_seed)
     if torch.cuda.is_available():
@@ -162,7 +164,7 @@ def train(args, model, device):
         else:
             outs = model(batch)
 
-        outs.loss.backward()
+        outs['loss'].backward()
         optimizer.step()
         if scheduler:
             scheduler.step()
@@ -207,7 +209,7 @@ def get_eval_path(args):
     filename += '.tar'
     return path, filename
 
-def gen_evalset(args):
+def gen_evalset(args, device):
     if args.eval_kernel == 'rbf':
         kernel = RBFKernel()
     elif args.eval_kernel == 'matern':
@@ -224,7 +226,7 @@ def gen_evalset(args):
         batches.append(sampler.sample(
             batch_size=args.eval_batch_size,
             max_num_points=args.max_num_points,
-            device='cuda'))
+            device=device))
 
     torch.manual_seed(time.time())
     torch.cuda.manual_seed(time.time())
@@ -254,7 +256,7 @@ def eval(args, model, device):
     path, filename = get_eval_path(args)
     if not osp.isfile(osp.join(path, filename)):
         print('generating evaluation sets...')
-        gen_evalset(args)
+        gen_evalset(args, device)
     eval_batches = torch.load(osp.join(path, filename))
 
     if args.mode == "eval":
@@ -314,7 +316,7 @@ def eval_all_metrics(args, model, device):
     path, filename = get_eval_path(args)
     if not osp.isfile(osp.join(path, filename)):
         print('generating evaluation sets...')
-        gen_evalset(args)
+        gen_evalset(args, device)
     eval_batches = torch.load(osp.join(path, filename))
 
     if args.mode == "eval_all_metrics":
@@ -329,19 +331,19 @@ def eval_all_metrics(args, model, device):
             for key, val in batch.items():
                 batch[key] = val.to(device)
             if args.model in ["np", "anp", "cnp", "canp", "bnp", "banp"]:
-                outs = model.predict(batch.xc, batch.yc, batch.xt, num_samples=args.eval_num_samples)
+                outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
                 ll = model(batch, num_samples=args.eval_num_samples)
             elif args.model in ["tnpa", "tnpnd"]:
                 outs = model.predict(
-                    batch.xc, batch.yc, batch.xt,
+                    batch['xc'], batch['yc'], batch['xt'],
                     num_samples=args.eval_num_samples
                 )
                 ll = model(batch)
             else:
-                outs = model.predict(batch.xc, batch.yc, batch.xt)
+                outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
                 ll = model(batch)
 
-            mean, std = outs.loc, outs.scale
+            mean, std = outs['loc'], outs['scale']
 
             # shape: (num_samples, 1, num_points, 1)
             if mean.dim() == 4:
@@ -354,7 +356,7 @@ def eval_all_metrics(args, model, device):
                 mean = mean.mean(dim=0).squeeze(0)
             
             mean, std = mean.squeeze().cpu().numpy().flatten(), std.squeeze().cpu().numpy().flatten()
-            yt = batch.yt.squeeze().cpu().numpy().flatten()
+            yt = batch['yt'].squeeze().cpu().numpy().flatten()
 
             acc = uct.metrics.get_all_accuracy_metrics(mean, yt, verbose=False)
             calibration = uct.metrics.get_all_average_calibration(mean, std, yt, num_bins=100, verbose=False)
@@ -414,8 +416,8 @@ def plot(args, model, device):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-    Nc = batch.xc.size(1)
-    Nt = batch.xt.size(1)
+    Nc = batch['xc'].size(1)
+    Nt = batch['xt'].size(1)
 
     model.eval()
     with torch.no_grad():
@@ -423,15 +425,15 @@ def plot(args, model, device):
             outs = model(batch, num_smp, reduce_ll=False)
         else:
             outs = model(batch, reduce_ll=False)
-        tar_loss = outs.tar_ll  # [Ns,B,Nt] ([B,Nt] for CNP)
+        tar_loss = outs['tar_ll']  # [Ns,B,Nt] ([B,Nt] for CNP)
         if args.model in ["cnp", "canp", "tnpd", "tnpa", "tnpnd"]:
             tar_loss = tar_loss.unsqueeze(0)  # [1,B,Nt]
 
         xt = xp[None, :, None].repeat(args.plot_batch_size, 1, 1)
         if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-            pred = model.predict(batch.xc, batch.yc, xt, num_samples=num_smp)
+            pred = model.predict(batch['xc'], batch['yc'], xt, num_samples=num_smp)
         else:
-            pred = model.predict(batch.xc, batch.yc, xt)
+            pred = model.predict(batch['xc'], batch['yc'], xt)
         
         mu, sigma = pred.mean, pred.scale
 
@@ -455,9 +457,9 @@ def plot(args, model, device):
                         color='skyblue',
                         alpha=max(0.2/args.plot_num_samples, 0.02),
                         linewidth=0.0)
-            ax.scatter(tnp(batch.xc[i]), tnp(batch.yc[i]),
+            ax.scatter(tnp(batch['xc'][i]), tnp(batch['yc'][i]),
                        color='k', label=f'context {Nc}', zorder=mu.shape[0] + 1)
-            ax.scatter(tnp(batch.xt[i]), tnp(batch.yt[i]),
+            ax.scatter(tnp(batch['xt'][i]), tnp(batch['yt'][i]),
                        color='orchid', label=f'target {Nt}',
                        zorder=mu.shape[0] + 1)
             ax.legend()
@@ -467,9 +469,9 @@ def plot(args, model, device):
             ax.plot(tnp(xp), tnp(mu[i]), color='steelblue', alpha=0.5)
             ax.fill_between(tnp(xp), tnp(mu[i]-sigma[i]), tnp(mu[i]+sigma[i]),
                     color='skyblue', alpha=0.2, linewidth=0.0)
-            ax.scatter(tnp(batch.xc[i]), tnp(batch.yc[i]),
+            ax.scatter(tnp(batch['xc'][i]), tnp(batch['yc'][i]),
                        color='k', label=f'context {Nc}')
-            ax.scatter(tnp(batch.xt[i]), tnp(batch.yt[i]),
+            ax.scatter(tnp(batch['xt'][i]), tnp(batch['yt'][i]),
                        color='orchid', label=f'target {Nt}')
             ax.legend()
             ax.set_title(f"tar_loss: {tar_loss[:, i, :].mean(): 0.4f}")

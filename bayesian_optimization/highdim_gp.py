@@ -194,7 +194,7 @@ def train(
         else:
             outs = model(batch=batch)
 
-        outs.loss.backward()
+        outs['loss'].backward()
         optimizer.step()
         scheduler.step()
 

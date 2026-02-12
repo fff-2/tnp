@@ -1,27 +1,28 @@
 import torch
 import numpy as np
+from typing import Dict, Any, Tuple
 
-from attrdict import AttrDict
 from utils.misc import one_hot
 from torch.utils.data import Dataset
 
-def dummy(x, idx, seed=0):  # x [...,N,I]  idx [N,]
+def dummy(x: torch.Tensor, idx: np.ndarray, seed: int = 0) -> torch.Tensor:  # x [...,N,I]  idx [N,]
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    _x = torch.randn(size=x.size())
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+    _x = torch.randn(size=x.size(), device=x.device)
     for n, i in enumerate(idx):
         _x[..., n, i] = x[..., n, i]  # retain only values corresponding to idx
     return _x  # [...,N,I]
 
 class WheelBanditDataset(Dataset):
-  def __init__(self, batch):
+  def __init__(self, batch: Dict[str, Any]):
     self.batch = batch
 
-  def __len__(self):
-    return self.batch.x.shape[0]
+  def __len__(self) -> int:
+    return self.batch['x'].shape[0]
 
-  def __getitem__(self, index):
-    batch = AttrDict()
+  def __getitem__(self, index: int) -> Dict[str, Any]:
+    batch = {}
     for k in self.batch.keys():
       if self.batch[k] is not None:
         batch[k] = self.batch[k][index]
@@ -33,9 +34,10 @@ class WheelBanditSampler():
     def __init__(self):
         pass
 
-    def sample(self, batch_size=8, num_contexts=512, num_targets=50, device=None, seed=0, reward="optimal"):
+    def sample(self, batch_size=8, num_contexts=512, num_targets=50, device=None, seed=0, reward="optimal") -> Dict[str, Any]:
         torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
         deltas = torch.rand(batch_size)
 
         Nc = num_contexts
@@ -43,7 +45,6 @@ class WheelBanditSampler():
         N = Nc + Nt  # num_points
         x, xc, xt, y, yc, yt, idx, d = [], [], [], [], [], [], [], []
 
-        batch = AttrDict()
         for i, delta in enumerate(deltas):
             dataset, opt_rewards, opt_actions, _, _ = sample_wheel_data(N, delta, seed+i)  # [N,7], [N,], [N,]
             contexts = torch.from_numpy(dataset[:, :2], ).type(torch.float32)  # [N,2]
@@ -69,17 +70,18 @@ class WheelBanditSampler():
             yt.append(_y[Nc:, :])  # [Nt,5]
             d.append(delta)  # [1,]
 
-        batch.x = torch.stack(x, 0)  # [B,N,2]
-        batch.xc = torch.stack(xc, 0)  # [B,Nc,2]
-        batch.xt = torch.stack(xt, 0)  # [B,Nt,2]
-        batch.y = torch.stack(y, 0)  # [B,N,5]
-        batch.yc = torch.stack(yc, 0)  # [B,Nc,5]
-        batch.yt = torch.stack(yt, 0)  # [B,Nt,5]
+        batch = {}
+        batch['x'] = torch.stack(x, 0)  # [B,N,2]
+        batch['xc'] = torch.stack(xc, 0)  # [B,Nc,2]
+        batch['xt'] = torch.stack(xt, 0)  # [B,Nt,2]
+        batch['y'] = torch.stack(y, 0)  # [B,N,5]
+        batch['yc'] = torch.stack(yc, 0)  # [B,Nc,5]
+        batch['yt'] = torch.stack(yt, 0)  # [B,Nt,5]
         if reward == "all":
-            batch.w = None
+            batch['w'] = None
         else:
-            batch.w = one_hot(torch.stack(idx, 0), batch.y.size(-1))  # [B,N,Dy]
-        batch.d = torch.tensor(d)  # [B,]
+            batch['w'] = one_hot(torch.stack(idx, 0), batch['y'].size(-1))  # [B,N,Dy]
+        batch['d'] = torch.tensor(d)  # [B,]
 
         return batch
 

@@ -246,7 +246,7 @@ def train(args, model):
                 outs = model(batch)
 
             if step % args.cmab_train_update_freq == 0:
-                outs.loss.backward()
+                outs['loss'].backward()
                 optimizer.step()
                 scheduler.step()
 

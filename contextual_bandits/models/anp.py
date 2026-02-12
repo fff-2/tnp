@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.distributions import kl_divergence
-from attrdict import AttrDict
 
 from utils.misc import stack, logmeanexp
 from models.modules import CrossAttnEncoder, PoolingEncoder, Decoder
@@ -59,19 +58,19 @@ class ANP(nn.Module):
         return self.dec(encoded, stack(xt, num_samples))
 
     def forward(self, batch, num_samples=None, reduce_ll=True):
-        outs = AttrDict()
+        outs = {}
 
         if self.training:
-            pz = self.lenc(batch.xc, batch.yc)
-            qz = self.lenc(batch.x, batch.y)
+            pz = self.lenc(batch['xc'], batch['yc'])
+            qz = self.lenc(batch['x'], batch['y'])
             z = qz.rsample() if num_samples is None else \
                 qz.rsample([num_samples])
-            py = self.predict(batch.xc, batch.yc, batch.x,
+            py = self.predict(batch['xc'], batch['yc'], batch['x'],
                               z=z, num_samples=num_samples)
 
             if num_samples > 1:
                 # K * B * N
-                recon = py.log_prob(stack(batch.y, num_samples)).sum(-1)
+                recon = py.log_prob(stack(batch['y'], num_samples)).sum(-1)
                 # K * B
                 log_qz = qz.log_prob(z).sum(-1)
                 log_pz = pz.log_prob(z).sum(-1)
@@ -79,31 +78,31 @@ class ANP(nn.Module):
                 # K * B
                 log_w = recon.sum(-1) + log_pz - log_qz
 
-                outs.loss = -logmeanexp(log_w).mean() / batch.x.shape[-2]
+                outs['loss'] = -logmeanexp(log_w).mean() / batch['x'].shape[-2]
             else:
-                outs.recon = py.log_prob(batch.y).sum(-1).mean()
-                outs.kld = kl_divergence(qz, pz).sum(-1).mean()
-                outs.loss = -outs.recon + outs.kld / batch.x.shape[-2]
+                outs['recon'] = py.log_prob(batch['y']).sum(-1).mean()
+                outs['kld'] = kl_divergence(qz, pz).sum(-1).mean()
+                outs['loss'] = -outs['recon'] + outs['kld'] / batch['x'].shape[-2]
 
         else:
-            py = self.predict(batch.xc, batch.yc, batch.x, num_samples=num_samples)
+            py = self.predict(batch['xc'], batch['yc'], batch['x'], num_samples=num_samples)
 
             if num_samples is None:
-                ll = py.log_prob(batch.y).sum(-1)
+                ll = py.log_prob(batch['y']).sum(-1)
             else:
-                y = torch.stack([batch.y] * num_samples)
+                y = torch.stack([batch['y']] * num_samples)
                 if reduce_ll:
                     ll = logmeanexp(py.log_prob(y).sum(-1))
                 else:
                     ll = py.log_prob(y).sum(-1)
 
-            num_ctx = batch.xc.shape[-2]
+            num_ctx = batch['xc'].shape[-2]
 
             if reduce_ll:
-                outs.ctx_ll = ll[..., :num_ctx].mean()
-                outs.tar_ll = ll[..., num_ctx:].mean()
+                outs['ctx_ll'] = ll[..., :num_ctx].mean()
+                outs['tar_ll'] = ll[..., num_ctx:].mean()
             else:
-                outs.ctx_ll = ll[..., :num_ctx]
-                outs.tar_ll = ll[..., num_ctx:]
+                outs['ctx_ll'] = ll[..., :num_ctx]
+                outs['tar_ll'] = ll[..., num_ctx:]
 
         return outs

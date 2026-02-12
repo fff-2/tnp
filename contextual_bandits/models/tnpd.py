@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
-from attrdict import AttrDict
 
 from models.tnp import TNP
 
@@ -44,18 +43,18 @@ class TNPD(TNP):
 
         std = torch.exp(std)
         pred_dist = Normal(mean, std)
-        loss = - pred_dist.log_prob(batch.y).sum(-1).mean()
+        loss = - pred_dist.log_prob(batch['y']).sum(-1).mean()
         
-        outs = AttrDict()
-        outs.loss = loss
+        outs = {}
+        outs['loss'] = loss
         return outs
 
     def predict(self, xc, yc, xt):
         batch = AttrDict()
-        batch.xc = xc
-        batch.yc = yc
-        batch.xt = xt
-        batch.yt = torch.zeros((xt.shape[0], xt.shape[1], yc.shape[2]), device='cuda')
+        batch['xc'] = xc
+        batch['yc'] = yc
+        batch['xt'] = xt
+        batch['yt'] = torch.zeros((xt.shape[0], xt.shape[1], yc.shape[2]), device=batch['xc'].device)
 
         num_context = xc.shape[1]
 
@@ -65,9 +64,9 @@ class TNPD(TNP):
         std = torch.exp(std)
         mean, std = mean[:, num_context:, :], std[:, num_context:, :]
 
-        outs = AttrDict()
-        outs.loc = mean.unsqueeze(0)
-        outs.scale = std.unsqueeze(0)
-        outs.ys = Normal(outs.loc, outs.scale)
+        outs = {}
+        outs['loc'] = mean.unsqueeze(0)
+        outs['scale'] = std.unsqueeze(0)
+        outs['ys'] = Normal(outs['loc'], outs['scale'])
         
         return outs

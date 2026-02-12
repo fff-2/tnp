@@ -142,7 +142,7 @@ def train(args, model, device):
         else:
             outs = model(batch)
 
-        outs.loss.backward()
+        outs['loss'].backward()
         optimizer.step()
         scheduler.step()
 

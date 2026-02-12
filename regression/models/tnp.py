@@ -27,28 +27,28 @@ class TNP(nn.Module):
         self.bound_std = bound_std
 
     def construct_input(self, batch, autoreg=False):
-        x_y_ctx = torch.cat((batch.xc, batch.yc), dim=-1)
-        x_0_tar = torch.cat((batch.xt, torch.zeros_like(batch.yt)), dim=-1)
+        x_y_ctx = torch.cat((batch['xc'], batch['yc']), dim=-1)
+        x_0_tar = torch.cat((batch['xt'], torch.zeros_like(batch['yt'])), dim=-1)
         if not autoreg:
             inp = torch.cat((x_y_ctx, x_0_tar), dim=1)
         else:
             if self.training and self.bound_std:
-                yt_noise = batch.yt + 0.05 * torch.randn_like(batch.yt) # add noise to the past to smooth the model
-                x_y_tar = torch.cat((batch.xt, yt_noise), dim=-1)
+                yt_noise = batch['yt'] + 0.05 * torch.randn_like(batch['yt']) # add noise to the past to smooth the model
+                x_y_tar = torch.cat((batch['xt'], yt_noise), dim=-1)
             else:
-                x_y_tar = torch.cat((batch.xt, batch.yt), dim=-1)
+                x_y_tar = torch.cat((batch['xt'], batch['yt']), dim=-1)
             inp = torch.cat((x_y_ctx, x_y_tar, x_0_tar), dim=1)
         return inp
 
     def create_mask(self, batch, autoreg=False):
-        num_ctx = batch.xc.shape[1]
-        num_tar = batch.xt.shape[1]
+        num_ctx = batch['xc'].shape[1]
+        num_tar = batch['xt'].shape[1]
         num_all = num_ctx + num_tar
         if not autoreg:
-            mask = torch.zeros(num_all, num_all, device='cuda').fill_(float('-inf'))
+            mask = torch.zeros(num_all, num_all, device=batch['xc'].device).fill_(float('-inf'))
             mask[:, :num_ctx] = 0.0
         else:
-            mask = torch.zeros((num_all+num_tar, num_all+num_tar), device='cuda').fill_(float('-inf'))
+            mask = torch.zeros((num_all+num_tar, num_all+num_tar), device=batch['xc'].device).fill_(float('-inf'))
             mask[:, :num_ctx] = 0.0 # all points attend to context points
             mask[num_ctx:num_all, num_ctx:num_all].triu_(diagonal=1) # each real target point attends to itself and precedding real target points
             mask[num_all:, num_ctx:num_all].triu_(diagonal=0) # each fake target point attends to preceeding real target points

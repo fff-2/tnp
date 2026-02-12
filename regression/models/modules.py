@@ -282,7 +282,7 @@ class CouplingLayer(nn.Module):
 
   def split(self, x):
     assert x.shape[1] % 2 == 0
-    mask = torch.zeros(x.shape[1], device='cuda')
+    mask = torch.zeros(x.shape[1], device=batch['xc'].device)
     mask[::2] = 1.
     if self.orientation:
       mask = 1. - mask     # flip mask orientation
@@ -291,7 +291,7 @@ class CouplingLayer(nn.Module):
     return x1, x2, mask
 
   def merge(self, x1, x2, mask):
-    x = torch.zeros((x2.shape[0], x1.shape[1]*2, x1.shape[2]), device='cuda')
+    x = torch.zeros((x2.shape[0], x1.shape[1]*2, x1.shape[2]), device=batch['xc'].device)
     x[:, mask.bool()] = x1
     x[:, (1-mask).bool()] = x2
     return x
@@ -331,7 +331,7 @@ class NICE(nn.Module):
     return x
 
 # nice = NICE(1, 10, 1, 20, 2, 4).cuda()
-# y = torch.randn((2, 4, 1), device='cuda')
+# y = torch.randn((2, 4, 1), device=batch['xc'].device)
 # z, logdet = nice(y)
 # y_prime = nice(z, True)
 # print (y)

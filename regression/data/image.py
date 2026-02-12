@@ -1,9 +1,12 @@
 import torch
-from attrdict import AttrDict
 from torch.distributions import StudentT
+from typing import Dict, Tuple, Optional
 
-def img_to_task(img, num_ctx=None,
-        max_num_points=None, target_all=False, t_noise=None):
+def img_to_task(img: torch.Tensor, 
+                num_ctx: Optional[int] = None,
+                max_num_points: Optional[int] = None, 
+                target_all: bool = False, 
+                t_noise: Optional[float] = None) -> Dict[str, torch.Tensor]:
 
     B, C, H, W = img.shape
     num_pixels = H*W
@@ -11,32 +14,35 @@ def img_to_task(img, num_ctx=None,
 
     if t_noise is not None:
         if t_noise == -1:
-            t_noise = 0.09 * torch.rand(img.shape)
-        img += t_noise * StudentT(2.1).rsample(img.shape)
+            t_noise = 0.09 * torch.rand(img.shape, device=img.device)
+        img += t_noise * StudentT(2.1).rsample(img.shape).to(img.device)
 
-    batch = AttrDict()
+    batch = {}
     max_num_points = max_num_points or num_pixels
     num_ctx = num_ctx or \
             torch.randint(low=3, high=max_num_points-3, size=[1]).item()
     num_tar = max_num_points - num_ctx if target_all else \
             torch.randint(low=3, high=max_num_points-num_ctx, size=[1]).item()
     num_points = num_ctx + num_tar
-    idxs = torch.cuda.FloatTensor(B, num_pixels).uniform_().argsort(-1)[...,:num_points].to(img.device)
+    
+    # Replaced torch.cuda.FloatTensor with device-agnostic torch.rand
+    idxs = torch.rand(B, num_pixels, device=img.device).argsort(-1)[...,:num_points]
+    
     x1, x2 = idxs//W, idxs%W
-    batch.x = torch.stack([
+    batch['x'] = torch.stack([
         2*x1.float()/(H-1) - 1,
         2*x2.float()/(W-1) - 1], -1).to(img.device)
-    batch.y = (torch.gather(img, -1, idxs.unsqueeze(-2).repeat(1, C, 1))\
+    batch['y'] = (torch.gather(img, -1, idxs.unsqueeze(-2).repeat(1, C, 1))\
             .transpose(-2, -1) - 0.5).to(img.device)
 
-    batch.xc = batch.x[:,:num_ctx]
-    batch.xt = batch.x[:,num_ctx:]
-    batch.yc = batch.y[:,:num_ctx]
-    batch.yt = batch.y[:,num_ctx:]
+    batch['xc'] = batch['x'][:,:num_ctx]
+    batch['xt'] = batch['x'][:,num_ctx:]
+    batch['yc'] = batch['y'][:,:num_ctx]
+    batch['yt'] = batch['y'][:,num_ctx:]
 
     return batch
 
-def coord_to_img(x, y, shape):
+def coord_to_img(x: torch.Tensor, y: torch.Tensor, shape: Tuple[int, int, int]) -> torch.Tensor:
     x = x.cpu()
     y = y.cpu()
     B = x.shape[0]
@@ -56,7 +62,7 @@ def coord_to_img(x, y, shape):
 
     return I
 
-def task_to_img(xc, yc, xt, yt, shape):
+def task_to_img(xc: torch.Tensor, yc: torch.Tensor, xt: torch.Tensor, yt: torch.Tensor, shape: Tuple[int, int, int]) -> Tuple[torch.Tensor, torch.Tensor]:
     xc = xc.cpu()
     yc = yc.cpu()
     xt = xt.cpu()

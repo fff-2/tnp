@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from attrdict import AttrDict
 from models.modules import PoolingEncoder, Decoder
 
 
@@ -45,20 +44,20 @@ class CNP(nn.Module):
         return self.dec(encoded, xt)  # Normal([B,N,1])
 
     def forward(self, batch, num_samples=None, reduce_ll=True):
-        outs = AttrDict()
-        py = self.predict(batch.xc, batch.yc, batch.x)  # Normal([B,N,1])
-        ll = py.log_prob(batch.y).sum(-1)  # [B,N]
+        outs = {}
+        py = self.predict(batch['xc'], batch['yc'], batch['x'])  # Normal([B,N,1])
+        ll = py.log_prob(batch['y']).sum(-1)  # [B,N]
 
         if self.training:
-            outs.loss = -ll.mean()
+            outs['loss'] = -ll.mean()
         else:
-            num_ctx = batch.xc.shape[-2]  # Nc
+            num_ctx = batch['xc'].shape[-2]  # Nc
             if reduce_ll:
-                outs.ctx_loss = ll[...,:num_ctx].mean()  # [1,]
-                outs.tar_loss = ll[...,num_ctx:].mean()  # [1,]
+                outs['ctx_loss'] = ll[...,:num_ctx].mean()  # [1,]
+                outs['tar_loss'] = ll[...,num_ctx:].mean()  # [1,]
             else:
-                outs.ctx_loss = ll[...,:num_ctx]  # [B,Nc]
-                outs.tar_loss = ll[...,num_ctx:]  # [B,Nt]
+                outs['ctx_loss'] = ll[...,:num_ctx]  # [B,Nc]
+                outs['tar_loss'] = ll[...,num_ctx:]  # [B,Nt]
 
         return outs
         # {"loss": [1,]} while training

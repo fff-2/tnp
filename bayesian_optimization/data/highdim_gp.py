@@ -3,16 +3,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
 import warnings
+from typing import Union, List, Tuple, Dict, Any
+
 sns.set()
 warnings.filterwarnings('ignore')
 
-from attrdict import AttrDict
 from gpytorch.kernels import ScaleKernel, RBFKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ConstantMean
 from gpytorch.models import ExactGP
 from gpytorch.priors import UniformPrior
-from typing import Union, List, Tuple
 
 
 class GaussianProcess(ExactGP):
@@ -62,7 +62,8 @@ class GPSampler:
         self.seed = seed
         if seed is not None:
             torch.manual_seed(seed)
-            torch.cuda.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(seed)
 
     def __call__(
             self,
@@ -73,25 +74,25 @@ class GPSampler:
             min_num_points: int = 128,
             x_range: Union[List, Tuple] = (-2, 2),
             random_parameter: bool = True
-    ):
+    ) -> Dict[str, torch.Tensor]:
         lb, ub = x_range
-
-        batch = AttrDict()
 
         num_ctx = num_ctx or torch.randint(min_num_points, max_num_points - min_num_points, size=[1]).item()
         num_tar = num_tar or torch.randint(min_num_points, max_num_points - num_ctx, size=[1]).item()
 
         num_points = num_ctx + num_tar
-        batch.x = lb + (ub - lb) * torch.rand([batch_size, num_points, self.dim], device=self.device)
-        batch.xc = batch.x[:, :num_ctx]
-        batch.xt = batch.x[:, num_ctx:]
+        
+        batch = {}
+        batch['x'] = lb + (ub - lb) * torch.rand([batch_size, num_points, self.dim], device=self.device)
+        batch['xc'] = batch['x'][:, :num_ctx]
+        batch['xt'] = batch['x'][:, num_ctx:]
 
         with gpytorch.settings.prior_mode(True):
-            batch.y = self.gp(batch.x,
-                              verbose=False,
-                              random_parameter=random_parameter).rsample().unsqueeze(-1)
-            batch.yc = batch.y[:, :num_ctx]
-            batch.yt = batch.y[:, num_ctx:]
+            batch['y'] = self.gp(batch['x'],
+                               verbose=False,
+                               random_parameter=random_parameter).rsample().unsqueeze(-1)
+            batch['yc'] = batch['y'][:, :num_ctx]
+            batch['yt'] = batch['y'][:, num_ctx:]
 
         return batch
 

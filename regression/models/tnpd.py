@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
-from attrdict import AttrDict
 
 from models.tnp import TNP
 
@@ -49,21 +48,21 @@ class TNPD(TNP):
 
         pred_tar = Normal(mean, std)
 
-        outs = AttrDict()
+        outs = {}
         if reduce_ll:
-            outs.tar_ll = pred_tar.log_prob(batch.yt).sum(-1).mean()
+            outs['tar_ll'] = pred_tar.log_prob(batch['yt']).sum(-1).mean()
         else:
-            outs.tar_ll = pred_tar.log_prob(batch.yt).sum(-1)
-        outs.loss = - (outs.tar_ll)
+            outs['tar_ll'] = pred_tar.log_prob(batch['yt']).sum(-1)
+        outs['loss'] = - (outs['tar_ll'])
 
         return outs
 
     def predict(self, xc, yc, xt):
         batch = AttrDict()
-        batch.xc = xc
-        batch.yc = yc
-        batch.xt = xt
-        batch.yt = torch.zeros((xt.shape[0], xt.shape[1], yc.shape[2]), device='cuda')
+        batch['xc'] = xc
+        batch['yc'] = yc
+        batch['xt'] = xt
+        batch['yt'] = torch.zeros((xt.shape[0], xt.shape[1], yc.shape[2]), device=batch['xc'].device)
 
         z_target = self.encode(batch, autoreg=False)
         out = self.predictor(z_target)

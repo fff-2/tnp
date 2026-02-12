@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
-from attrdict import AttrDict
 
 from models.modules import build_mlp
 from models.tnp import TNP
@@ -64,7 +63,7 @@ class TNPND(TNP):
             std_tril = torch.bmm(std_prj, std_prj.transpose(1,2))
             std_tril = std_tril.tril()
             if self.bound_std:
-                diag_ids = torch.arange(num_target*dim_y, device='cuda')
+                diag_ids = torch.arange(num_target*dim_y, device=batch['xc'].device)
                 std_tril[:, diag_ids, diag_ids] = 0.05 + 0.95*torch.tanh(std_tril[:, diag_ids, diag_ids])
             pred_tar = torch.distributions.multivariate_normal.MultivariateNormal(mean, scale_tril=std_tril)
         else:
@@ -75,25 +74,25 @@ class TNPND(TNP):
         return pred_tar
 
     def forward(self, batch, reduce_ll=True):
-        batch_size = batch.x.shape[0]
-        dim_y = batch.y.shape[-1]
-        num_target = batch.xt.shape[1]
+        batch_size = batch['x'].shape[0]
+        dim_y = batch['y'].shape[-1]
+        num_target = batch['xt'].shape[1]
 
         out_encoder = self.encode(batch, autoreg=False)
         pred_tar = self.decode(out_encoder, batch_size, dim_y, num_target)
 
-        outs = AttrDict()
-        outs.tar_ll = pred_tar.log_prob(batch.yt.reshape(batch_size, -1))
+        outs = {}
+        outs['tar_ll'] = pred_tar.log_prob(batch['yt'].reshape(batch_size, -1))
 
         if not self.training:
-            outs.tar_ll /= num_target
+            outs['tar_ll'] /= num_target
 
         if reduce_ll:
-            outs.tar_ll = outs.tar_ll.mean()
-            outs.loss = - (outs.tar_ll)
-            outs.mean_std = torch.mean(pred_tar.covariance_matrix)
+            outs['tar_ll'] = outs['tar_ll'].mean()
+            outs['loss'] = - (outs['tar_ll'])
+            outs['mean_std'] = torch.mean(pred_tar.covariance_matrix)
         else:
-            outs.tar_ll = outs.tar_ll.unsqueeze(-1)
+            outs['tar_ll'] = outs['tar_ll'].unsqueeze(-1)
 
         return outs
 
@@ -104,10 +103,10 @@ class TNPND(TNP):
         num_target = xt.shape[1]
 
         batch = AttrDict()
-        batch.xc = xc
-        batch.yc = yc
-        batch.xt = xt
-        batch.yt = torch.zeros((xt.shape[0], xt.shape[1], yc.shape[2]), device='cuda')
+        batch['xc'] = xc
+        batch['yc'] = yc
+        batch['xt'] = xt
+        batch['yt'] = torch.zeros((xt.shape[0], xt.shape[1], yc.shape[2]), device=batch['xc'].device)
 
         out_encoder = self.encode(batch, autoreg=False)
         pred_tar = self.decode(out_encoder, batch_size, dim_y, num_target)

@@ -163,7 +163,7 @@ def train(args, model, device):
             else:
                 outs = model(batch)
 
-            outs.loss.backward()
+            outs['loss'].backward()
             optimizer.step()
             if scheduler:
                 scheduler.step()
@@ -327,19 +327,19 @@ def eval_all_metrics(args, model, device):
                 batch[key] = val.to(device)
 
             if args.model in ["np", "anp", "bnp", "banp"]:
-                outs = model.predict(batch.xc, batch.yc, batch.xt, num_samples=args.eval_num_samples)
+                outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
                 ll = model(batch, num_samples=args.eval_num_samples)
             elif args.model in ["tnpa", "tnpnd"]:
                 outs = model.predict(
-                    batch.xc, batch.yc, batch.xt,
+                    batch['xc'], batch['yc'], batch['xt'],
                     num_samples=args.eval_num_samples
                 )
                 ll = model(batch)
             else:
-                outs = model.predict(batch.xc, batch.yc, batch.xt)
+                outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
                 ll = model(batch)
 
-            mean, std = outs.loc, outs.scale
+            mean, std = outs['loc'], outs['scale']
 
             # shape: (num_samples, 1, num_points, 1)
             if mean.dim() == 4:
@@ -348,7 +348,7 @@ def eval_all_metrics(args, model, device):
                 mean = mean.mean(dim=0).squeeze(0)
             
             mean, std = mean.squeeze().cpu().numpy().flatten(), std.squeeze().cpu().numpy().flatten()
-            yt = batch.yt.squeeze().cpu().numpy().flatten()
+            yt = batch['yt'].squeeze().cpu().numpy().flatten()
 
             acc = uct.metrics.get_all_accuracy_metrics(mean, yt, verbose=False)
             sharpness = uct.metrics.get_all_sharpness_metrics(std, verbose=False)
@@ -399,17 +399,17 @@ def plot(args, model, device):
     model.eval()
     with torch.no_grad():
         if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-            outs = model.predict(batch.xc, batch.yc, batch.xt, num_samples=args.eval_num_samples)
+            outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
         else:
-            outs = model.predict(batch.xc, batch.yc, batch.xt)
+            outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
 
-    mean = outs.mean
+    mean = outs['mean']
     # shape: (num_samples, 1, num_points, 1)
     if mean.dim() == 4:
         mean = mean.mean(dim=0)
 
-    task_img, completed_img = task_to_img(batch.xc, batch.yc, batch.xt, mean, shape=(1,28,28))
-    _, orig_img = task_to_img(batch.xc, batch.yc, batch.xt, batch.yt, shape=(1,28,28))
+    task_img, completed_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], mean, shape=(1,28,28))
+    _, orig_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], batch['yt'], shape=(1,28,28))
 
     task_img = (task_img * 255).int().cpu().numpy().transpose(0,2,3,1)
     completed_img = (completed_img * 255).int().cpu().numpy().transpose(0,2,3,1)
@@ -443,9 +443,9 @@ def plot_samples(args, model, device):
     with torch.no_grad():
         for batch in batches:
             if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-                samples = model.sample(batch.xc, batch.yc, batch.xt, num_samples=args.eval_num_samples)
+                samples = model.sample(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
             else:
-                samples = model.sample(batch.xc, batch.yc, batch.xt)
+                samples = model.sample(batch['xc'], batch['yc'], batch['xt'])
             all_samples.append(samples)
 
     c1, c2 = args.class_range
@@ -464,7 +464,7 @@ def plot_samples(args, model, device):
         samples = all_samples[i]
 
         for j in range(args.eval_num_samples):
-            task_img, completed_img = task_to_img(batch.xc, batch.yc, batch.xt, samples[j], shape=(1,28,28)) # (num_imgs, 32, 32, 3)
+            task_img, completed_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], samples[j], shape=(1,28,28)) # (num_imgs, 32, 32, 3)
 
             task_img = (task_img * 255).int().cpu().numpy().transpose(0,2,3,1)
             completed_img = (completed_img * 255).int().cpu().numpy().transpose(0,2,3,1)

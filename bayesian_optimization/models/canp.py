@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from attrdict import AttrDict
 
 from models.modules import CrossAttnEncoder, Decoder, PoolingEncoder
 
@@ -49,19 +48,19 @@ class CANP(nn.Module):
         return self.dec(encoded, xt)
 
     def forward(self, batch, num_samples=None, reduce_ll=True):
-        outs = AttrDict()
-        py = self.predict(batch.xc, batch.yc, batch.x)
-        ll = py.log_prob(batch.y).sum(-1)
+        outs = {}
+        py = self.predict(batch['xc'], batch['yc'], batch['x'])
+        ll = py.log_prob(batch['y']).sum(-1)
 
         if self.training:
-            outs.loss = - ll.mean()
+            outs['loss'] = - ll.mean()
         else:
-            num_ctx = batch.xc.shape[-2]
+            num_ctx = batch['xc'].shape[-2]
             if reduce_ll:
-                outs.ctx_loss = ll[...,:num_ctx].mean()
-                outs.tar_loss = ll[...,num_ctx:].mean()
+                outs['ctx_loss'] = ll[...,:num_ctx].mean()
+                outs['tar_loss'] = ll[...,num_ctx:].mean()
             else:
-                outs.ctx_loss = ll[...,:num_ctx]
-                outs.tar_loss = ll[...,num_ctx:]
+                outs['ctx_loss'] = ll[...,:num_ctx]
+                outs['tar_loss'] = ll[...,num_ctx:]
 
         return outs

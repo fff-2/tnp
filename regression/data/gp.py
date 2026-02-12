@@ -1,8 +1,7 @@
 import torch
 from torch.distributions import MultivariateNormal, StudentT
-from attrdict import AttrDict
 import math
-
+from typing import Optional, Tuple, Dict
 
 __all__ = ["GPPriorSampler", 'GPSampler', 'RBFKernel', 'PeriodicKernel', 'Matern52Kernel']
 
@@ -35,40 +34,42 @@ class GPSampler(object):
         self.t_noise = t_noise
         if seed is not None:
             torch.manual_seed(seed)
-            torch.cuda.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(seed)
         self.seed = seed
 
     def sample(self,
-            batch_size=16,
-            num_ctx=None,
-            num_tar=None,
-            max_num_points=50,
-            x_range=(-2, 2),
-            device='cpu'):
+            batch_size: int = 16,
+            num_ctx: Optional[int] = None,
+            num_tar: Optional[int] = None,
+            max_num_points: int = 50,
+            x_range: Tuple[float, float] = (-2, 2),
+            device: str = 'cpu') -> Dict[str, torch.Tensor]:
 
-        batch = AttrDict()
         num_ctx = num_ctx or torch.randint(low=3, high=max_num_points-3, size=[1]).item()  # Nc
         num_tar = num_tar or torch.randint(low=3, high=max_num_points-num_ctx, size=[1]).item()  # Nt
 
         num_points = num_ctx + num_tar  # N = Nc + Nt
-        batch.x = x_range[0] + (x_range[1] - x_range[0]) \
+        
+        batch = {}
+        batch['x'] = x_range[0] + (x_range[1] - x_range[0]) \
                 * torch.rand([batch_size, num_points, 1], device=device)  # [B,N,Dx=1]
-        batch.xc = batch.x[:,:num_ctx]  # [B,Nc,1]
-        batch.xt = batch.x[:,num_ctx:]  # [B,Nt,1]
+        batch['xc'] = batch['x'][:,:num_ctx]  # [B,Nc,1]
+        batch['xt'] = batch['x'][:,num_ctx:]  # [B,Nt,1]
 
         # batch_size * num_points * num_points
-        cov = self.kernel(batch.x)  # [B,N,N]
+        cov = self.kernel(batch['x'])  # [B,N,N]
         mean = torch.zeros(batch_size, num_points, device=device)  # [B,N]
-        batch.y = MultivariateNormal(mean, cov).rsample().unsqueeze(-1)  # [B,N,Dy=1]
-        batch.yc = batch.y[:,:num_ctx]  # [B,Nc,1]
-        batch.yt = batch.y[:,num_ctx:]  # [B,Nt,1]
+        batch['y'] = MultivariateNormal(mean, cov).rsample().unsqueeze(-1)  # [B,N,Dy=1]
+        batch['yc'] = batch['y'][:,:num_ctx]  # [B,Nc,1]
+        batch['yt'] = batch['y'][:,num_ctx:]  # [B,Nt,1]
 
         if self.t_noise is not None:
             if self.t_noise == -1:
-                t_noise = 0.15 * torch.rand(batch.y.shape).to(device)  # [B,N,1]
+                t_noise = 0.15 * torch.rand(batch['y'].shape).to(device)  # [B,N,1]
             else:
                 t_noise = self.t_noise
-            batch.y += t_noise * StudentT(2.1).rsample(batch.y.shape).to(device)
+            batch['y'] += t_noise * StudentT(2.1).rsample(batch['y'].shape).to(device)
         return batch
         # {"x": [B,N,1], "xc": [B,Nc,1], "xt": [B,Nt,1],
         #  "y": [B,N,1], "yc": [B,Nt,1], "yt": [B,Nt,1]}
