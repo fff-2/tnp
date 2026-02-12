@@ -3,15 +3,15 @@
 ---
 ### Training
 ```
-python gp.py --mode=train --expid=default-tnpa --model=tnpa
+../scripts/train/train_gp.sh
 ```
 The config of hyperparameters of each model is saved in `configs/gp`. If training for the first time, evaluation data will be generated and saved in `evalsets/gp`. Model weights and logs are saved in `results/gp/{model}/{expid}`.
 
 ### Evaluation
 ```
-python gp.py --mode=evaluate_all_metrics --expid=default-tnpa --model=tnpa
+../scripts/eval/eval_gp.sh
 ```
-Note that you have to specify `{expid}` correctly. The model will load weights from `results/gp/{model}/{expid}` to evaluate.
+Note that you have to specify `{expid}` correctly in the script or pass it as an argument. The model will load weights from `results/gp/{model}/{expid}` to evaluate.
 
 ## CelebA Image Completion
 ---
@@ -21,12 +21,12 @@ Download [img_align_celeba.zip](https://drive.google.com/drive/folders/0B7EVK8r0
 
 ### Training
 ```
-python celeba.py --mode=train --expid=default-tnpa --model=tnpa
+../scripts/train/train_celeba.sh
 ```
 
 ### Evaluation
 ```
-python celeba.py --mode=evaluate_all_metrics --expid=default-tnpa --model=tnpa
+../scripts/eval/eval_celeba.sh
 ```
 If evaluating for the first time, evaluation data will be generated and saved in `evalsets/celeba`.
 
@@ -35,12 +35,12 @@ If evaluating for the first time, evaluation data will be generated and saved in
 
 ### Training
 ```
-python emnist.py --mode=train --expid=default-tnpa --model=tnpa
+../scripts/train/train_emnist.sh
 ```
 If training for the first time, EMNIST training data will automatically downloaded and saved in `datasets/emnist`.
 
 ### Evaluation
 ```
-python emnist.py --mode=evaluate_all_metrics --expid=default-tnpa --model=tnpa
+../scripts/eval/eval_emnist.sh
 ```
 If evaluating for the first time, evaluation data will be generated and saved in `evalsets/emnist`.

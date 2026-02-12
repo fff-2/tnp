@@ -1,10 +1,10 @@
-import os
-import os.path as osp
+import argparse
+import sys
 import yaml
 import torch
+import numpy as np
 import time
-import argparse
-from attrdict import AttrDict
+import wandb
 from tqdm import tqdm
 
 from data.gp import *
@@ -12,6 +12,10 @@ from utils.misc import load_module
 from utils.log import get_logger, RunningAverage
 from utils.paths import results_path, evalsets_path
 
+def get_device(no_cuda: bool = False) -> torch.device:
+    if not no_cuda and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -50,6 +54,10 @@ def main():
     parser.add_argument('--eval_kernel', type=str, default='rbf')
     parser.add_argument('--t_noise', type=float, default=None)
 
+    parser.add_argument('--no-cuda', action='store_true', default=False)
+    parser.add_argument('--wandb-project', type=str, default='gp-1d')
+    parser.add_argument('--wandb-entity', type=str, default=None)
+
     args = parser.parse_args()
 
     if args.expid is not None:
@@ -61,19 +69,25 @@ def main():
     with open(f'configs/gp/{args.model}.yaml', 'r') as f:
         config = yaml.safe_load(f)
 
+    device = get_device(args.no_cuda)
+
+    # Initialize W&B
+    if args.mode == 'train':
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=args.__dict__, name=f"{args.model}-{args.expid}")
+
     if args.model in ["np", "anp", "cnp", "canp", "bnp", "banp", "tnpa", "tnpd", "tnpnd"]:
         model = model_cls(**config)
-    model.cuda()
+    model.to(device)
 
     if args.mode == 'train':
-        train(args, model)
+        train(args, model, device)
     elif args.mode == 'eval':
-        eval(args, model)
+        eval(args, model, device)
 
     return args.root
 
 
-def train(args, model):
+def train(args, model, device):
     if osp.exists(args.root + '/ckpt.tar'):
         if args.resume is None:
             raise FileExistsError(args.root)
@@ -89,19 +103,20 @@ def train(args, model):
         gen_evalset(args)
 
     torch.manual_seed(args.train_seed)
-    torch.cuda.manual_seed(args.train_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(args.train_seed)
 
     sampler = GPSampler(RBFKernel(), seed=args.train_seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs)
 
     if args.resume:
-        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'))
-        model.load_state_dict(ckpt.model)
-        optimizer.load_state_dict(ckpt.optimizer)
-        scheduler.load_state_dict(ckpt.scheduler)
-        logfilename = ckpt.logfilename
-        start_step = ckpt.step
+        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location=device)
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
+        logfilename = ckpt['logfilename']
+        start_step = ckpt['step']
     else:
         logfilename = os.path.join(args.root,
                 f'train_{time.strftime("%Y%m%d-%H%M")}.log')
@@ -120,7 +135,7 @@ def train(args, model):
         batch = sampler.sample(
             batch_size=args.train_batch_size,
             max_num_points=args.max_num_points,
-            device='cuda')
+            device=device)
         
         if args.model in ["np", "anp", "bnp", "banp"]:
             outs = model(batch, num_samples=args.train_num_samples)
@@ -135,6 +150,9 @@ def train(args, model):
             ravg.update(key, val)
 
         if step % args.print_freq == 0:
+            # Log to W&B
+            wandb.log(ravg.get_dict(), step=step)
+
             line = f'{args.model}:{args.expid} step {step} '
             line += f'lr {optimizer.param_groups[0]["lr"]:.3e} '
             line += f"[train_loss] "
@@ -142,22 +160,22 @@ def train(args, model):
             logger.info(line)
 
             if step % args.eval_freq == 0:
-                line = eval(args, model)
+                line = eval(args, model, device, step=step)
                 logger.info(line + '\n')
 
             ravg.reset()
 
         if step % args.save_freq == 0 or step == args.num_epochs:
-            ckpt = AttrDict()
-            ckpt.model = model.state_dict()
-            ckpt.optimizer = optimizer.state_dict()
-            ckpt.scheduler = scheduler.state_dict()
-            ckpt.logfilename = logfilename
-            ckpt.step = step + 1
+            ckpt = {}
+            ckpt['model'] = model.state_dict()
+            ckpt['optimizer'] = optimizer.state_dict()
+            ckpt['scheduler'] = scheduler.state_dict()
+            ckpt['logfilename'] = logfilename
+            ckpt['step'] = step + 1
             torch.save(ckpt, os.path.join(args.root, 'ckpt.tar'))
 
     args.mode = 'eval'
-    eval(args, model)
+    eval(args, model, device)
 
 
 def get_eval_path(args):
@@ -190,7 +208,8 @@ def gen_evalset(args):
             device='cuda'))
 
     torch.manual_seed(time.time())
-    torch.cuda.manual_seed(time.time())
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(time.time())
 
     path, filename = get_eval_path(args)
     if not osp.isdir(path):
@@ -198,10 +217,10 @@ def gen_evalset(args):
     torch.save(batches, osp.join(path, filename))
 
 
-def eval(args, model):
+def eval(args, model, device, step=None):
     if args.mode == 'eval':
-        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location='cuda')
-        model.load_state_dict(ckpt.model)
+        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location=device)
+        model.load_state_dict(ckpt['model'])
         if args.eval_logfile is None:
             eval_logfile = f'eval_{args.eval_kernel}'
             if args.t_noise is not None:
@@ -222,14 +241,15 @@ def eval(args, model):
 
     if args.mode == "eval":
         torch.manual_seed(args.eval_seed)
-        torch.cuda.manual_seed(args.eval_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(args.eval_seed)
 
     ravg = RunningAverage()
     model.eval()
     with torch.no_grad():
         for batch in tqdm(eval_batches, ascii=True):
             for key, val in batch.items():
-                batch[key] = val.cuda()
+                batch[key] = val.to(device)
             
             if args.model in ["np", "anp", "bnp", "banp"]:
                 outs = model(batch, num_samples=args.eval_num_samples)
@@ -239,8 +259,13 @@ def eval(args, model):
             for key, val in outs.items():
                 ravg.update(key, val)
 
+    # Log eval metrics to W&B
+    if args.mode == 'train' and step is not None: # Only log if called during training
+         wandb.log({f"eval_{k}": v for k, v in ravg.get_dict().items()}, step=step)
+
     torch.manual_seed(time.time())
-    torch.cuda.manual_seed(time.time())
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(time.time())
 
     line = f'{args.model}:{args.expid} {args.eval_kernel} '
     if args.t_noise is not None:

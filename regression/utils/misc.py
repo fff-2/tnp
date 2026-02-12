@@ -1,7 +1,7 @@
 import os
-from importlib.machinery import SourceFileLoader
-import math
-import torch
+import importlib.util
+import sys
+from types import ModuleType
 
 def gen_load_func(parser, func):
     def load(args, cmdline):
@@ -12,13 +12,15 @@ def gen_load_func(parser, func):
     return load
 
 
-def load_module(filename):
+def load_module(filename: str) -> ModuleType:
     module_name = os.path.splitext(os.path.basename(filename))[0]
-    return SourceFileLoader(module_name, filename).load_module()
-    # <module "module_name" from "filename">
-    #
-    # ex.
-    # <module "cnp" from "models/cnp.py">
+    spec = importlib.util.spec_from_file_location(module_name, filename)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load module from {filename}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def logmeanexp(x, dim=0):

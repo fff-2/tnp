@@ -1,0 +1,18 @@
+torch>=2.0.0
+numpy
+scipy
+pyyaml
+tqdm
+Pillow
+wandb
+uncertainty-toolbox
+# BO dependencies
+botorch
+gpytorch
+bayeso
+matplotlib
+seaborn
+# Optional/Dev
+black
+mypy
+types-PyYAML

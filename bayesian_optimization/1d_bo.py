@@ -1,24 +1,28 @@
-import os
-import os.path as osp
+import argparse
+import sys
 import yaml
 import torch
 import time
 import matplotlib.pyplot as plt
 import numpy as np
-import argparse
 import seaborn as sns
-sns.set()
+import wandb
+from tqdm import tqdm
 
-from attrdict import AttrDict
 from bayeso import acquisition, covariance
 from bayeso.gp import gp_kernel as gp
 from bayeso.utils.utils_gp import get_prior_mu
-from tqdm import tqdm
 
 from data.gp import *
 from utils.misc import load_module
 from utils.paths import results_path
 
+sns.set()
+
+def get_device(no_cuda: bool = False) -> torch.device:
+    if not no_cuda and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -44,11 +48,21 @@ def main():
 
     parser.add_argument('--t_noise', type=float, default=None)
 
+    parser.add_argument('--no-cuda', action='store_true', default=False)
+    parser.add_argument('--wandb-project', type=str, default='bo-1d')
+    parser.add_argument('--wandb-entity', type=str, default=None)
+
     args = parser.parse_args()
 
     # args.str_cov = 'se'
     args.num_task = 100
     args.num_iter = 100
+
+    device = get_device(args.no_cuda)
+
+    if args.bo_mode != 'plot' and args.bo_mode != 'oracle':
+        # Initialize W&B
+         wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=args.__dict__, name=f"{args.model}-{args.expid}")
 
     model = None
     if args.bo_mode == 'models':
@@ -60,7 +74,7 @@ def main():
             config = yaml.safe_load(f)
         if args.model in ["np", "anp", "cnp", "canp", "bnp", "banp", "tnpa", "tnpd", "tnpnd"]:
             model = model_cls(**config)
-        model.cuda()
+        model.to(device)
 
     if 'plot' in args.bo_mode:
         args.root = osp.join(results_path, f'bayesopt_{args.bo_kernel}')
@@ -72,9 +86,9 @@ def main():
         os.makedirs(args.root)
 
     if args.bo_mode == 'oracle':
-        oracle(args)
+        oracle(args, device)
     elif args.bo_mode == 'models':
-        models(args, model)
+        models(args, model, device)
     elif args.bo_mode == 'plot':
         plot(args)
     else:
@@ -137,7 +151,7 @@ def get_file(path, str_kernel, str_model, noise, seed=None):
     return osp.join(path, str_all)
 
 
-def oracle(args):
+def oracle(args, device):
     if args.bo_kernel == 'rbf':
         kernel = RBFKernel()
     elif args.bo_kernel == 'matern':
@@ -152,28 +166,29 @@ def oracle(args):
         seed_ = args.bo_seed * i_seed
 
         torch.manual_seed(seed_)
-        torch.cuda.manual_seed(seed_)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed_)
 
         sampler = GPPriorSampler(kernel, t_noise=args.t_noise)
 
-        x = torch.linspace(-2, 2, 1000).cuda()  # (num_points,)
+        x = torch.linspace(-2, 2, 1000).to(device)  # (num_points,)
         x_ = x.unsqueeze(0).unsqueeze(2)  # (1, num_points, 1)
 
-        y = sampler.sample(x_, 'cuda')  # (1, num_points, 1)
+        y = sampler.sample(x_, device)  # (1, num_points, 1)
         min_y = y.min()
 
-        batch = AttrDict()
+        batch = {}
         # random permutation of index
         idx = torch.randperm(y.shape[1])
 
-        batch.xc = x_[:, idx[:args.bo_num_init], :]
-        batch.yc = y[:, idx[:args.bo_num_init], :]
+        batch['xc'] = x_[:, idx[:args.bo_num_init], :]
+        batch['yc'] = y[:, idx[:args.bo_num_init], :]
 
-        X_train = batch.xc.squeeze(0).cpu().numpy()  # (num_init, 1)
-        Y_train = batch.yc.squeeze(0).cpu().numpy()  # (num_init, 1)
+        X_train = batch['xc'].squeeze(0).cpu().numpy()  # (num_init, 1)
+        Y_train = batch['yc'].squeeze(0).cpu().numpy()  # (num_init, 1)
         X_test = x_.squeeze(0).cpu().numpy()  # (num_points, 1)
 
-        list_min = [batch.yc.min().cpu().numpy()]
+        list_min = [batch['yc'].min().cpu().numpy()]
         times = [0]
         stime = time.time()
         Plot = PlotIteration(args,
@@ -205,16 +220,16 @@ def oracle(args):
 
             if i < 10:
                 Plot.plot(i, mu_.ravel(), sigma_.ravel(),
-                          batch.xc[0, -1, 0].cpu(), batch.yc[0, -1, 0].cpu(),
+                          batch['xc'][0, -1, 0].cpu(), batch['yc'][0, -1, 0].cpu(),
                           acq_vals, x_new.squeeze().cpu(), ind_)
 
-            batch.xc = torch.cat([batch.xc, x_new], dim=1)
-            batch.yc = torch.cat([batch.yc, y_new], dim=1)
+            batch['xc'] = torch.cat([batch['xc'], x_new], dim=1)
+            batch['yc'] = torch.cat([batch['yc'], y_new], dim=1)
 
-            X_train = batch.xc.squeeze(0).cpu().numpy()
-            Y_train = batch.yc.squeeze(0).cpu().numpy()
+            X_train = batch['xc'].squeeze(0).cpu().numpy()
+            Y_train = batch['yc'].squeeze(0).cpu().numpy()
 
-            current_min = batch.yc.min()
+            current_min = batch['yc'].min()
             list_min.append(current_min.cpu().numpy())
             times.append(time.time() - stime)
 
@@ -234,7 +249,7 @@ def oracle(args):
                      args.model, args.t_noise, args.bo_seed), list_dict)
 
 
-def models(args, model):
+def models(args, model, device):
     if args.bo_kernel == 'rbf':
         kernel = RBFKernel()
     elif args.bo_kernel == 'matern':
@@ -244,34 +259,35 @@ def models(args, model):
     else:
         raise ValueError(f"Invalid kernel {args.bo_kernel}")
 
-    ckpt = torch.load(os.path.join(results_path, 'gp', args.model, args.expid, 'ckpt.tar'), map_location='cuda')
-    model.load_state_dict(ckpt.model)
+    ckpt = torch.load(os.path.join(results_path, 'gp', args.model, args.expid, 'ckpt.tar'), map_location=device)
+    model.load_state_dict(ckpt['model'])
 
     list_dict = []
     for i_seed in tqdm(range(1, args.num_task + 1), unit='task', ascii=True):
         seed_ = args.bo_seed * i_seed
 
         torch.manual_seed(seed_)
-        torch.cuda.manual_seed(seed_)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed_)
 
         obj_prior = GPPriorSampler(kernel, t_noise=args.t_noise)
 
-        x = torch.linspace(-2, 2, 1000).cuda()  # (num_points,)
+        x = torch.linspace(-2, 2, 1000).to(device)  # (num_points,)
         x_ = x.unsqueeze(0).unsqueeze(2)  # (1, num_points, 1)
 
-        y = obj_prior.sample(x_, device='cuda')  # (1, num_points, 1)
+        y = obj_prior.sample(x_, device=device)  # (1, num_points, 1)
         min_y = y.min()
 
-        batch = AttrDict()
+        batch = {}
         idx = torch.randperm(y.shape[1])
 
-        batch.xc = x_[:, idx[:args.bo_num_init], :]
-        batch.yc = y[:, idx[:args.bo_num_init], :]
+        batch['xc'] = x_[:, idx[:args.bo_num_init], :]
+        batch['yc'] = y[:, idx[:args.bo_num_init], :]
 
-        X_train = batch.xc.squeeze(0).cpu().numpy()  # (num_init, 1)
-        Y_train = batch.yc.squeeze(0).cpu().numpy()  # (num_init, 1)
+        X_train = batch['xc'].squeeze(0).cpu().numpy()  # (num_init, 1)
+        Y_train = batch['yc'].squeeze(0).cpu().numpy()  # (num_init, 1)
 
-        list_min = [batch.yc.min().cpu().numpy()]
+        list_min = [batch['yc'].min().cpu().numpy()]
         times = [0]
         stime = time.time()
         Plot = PlotIteration(args,
@@ -284,13 +300,13 @@ def models(args, model):
         for i in range(0, args.num_iter):
             with torch.no_grad():
                 if args.model in ["np", "anp", "bnp", "banp"]:
-                    py = model.predict(xc=batch.xc,
-                                       yc=batch.yc,
+                    py = model.predict(xc=batch['xc'],
+                                       yc=batch['yc'],
                                        xt=x[None, :, None],
                                        num_samples=args.bo_num_samples)
                     mu, sigma = py.mean.squeeze(0), py.scale.squeeze(0)
                 else:
-                    py = model.predict(xc=batch.xc, yc=batch.yc, xt=x[None, :, None])
+                    py = model.predict(xc=batch['xc'], yc=batch['yc'], xt=x[None, :, None])
                     mu, sigma = py.mean.squeeze(0), py.scale.squeeze(0)
 
             # shape: (num_samples, 1, num_points, 1)
@@ -311,16 +327,16 @@ def models(args, model):
 
             if i < 10:
                 Plot.plot(i, mu_.ravel(), sigma_.ravel(),
-                          batch.xc[0, -1, 0].cpu(), batch.yc[0, -1, 0].cpu(),
+                          batch['xc'][0, -1, 0].cpu(), batch['yc'][0, -1, 0].cpu(),
                           acq_vals, x_new.squeeze().cpu(), ind_)
 
-            batch.xc = torch.cat([batch.xc, x_new], dim=1)
-            batch.yc = torch.cat([batch.yc, y_new], dim=1)
+            batch['xc'] = torch.cat([batch['xc'], x_new], dim=1)
+            batch['yc'] = torch.cat([batch['yc'], y_new], dim=1)
 
-            X_train = batch.xc.squeeze(0).cpu().numpy()
-            Y_train = batch.yc.squeeze(0).cpu().numpy()
+            X_train = batch['xc'].squeeze(0).cpu().numpy()
+            Y_train = batch['yc'].squeeze(0).cpu().numpy()
 
-            current_min = batch.yc.min()
+            current_min = batch['yc'].min()
             list_min.append(current_min.cpu().numpy())
             times.append(time.time() - stime)
 

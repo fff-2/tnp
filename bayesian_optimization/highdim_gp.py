@@ -1,11 +1,11 @@
-import os
-import os.path as osp
-import time
-import torch
-import tqdm
+import argparse
+import sys
 import yaml
-from argparse import ArgumentParser
-from attrdict import AttrDict
+import torch
+import numpy as np
+import time
+import wandb
+from tqdm import tqdm
 from torch.nn import Module
 
 from data.highdim_gp import GPSampler
@@ -13,6 +13,10 @@ from utils.log import get_logger, RunningAverage
 from utils.misc import load_module
 from utils.paths import results_path, evalsets_path, datasets_path as datasets_path_
 
+def get_device(no_cuda: bool = False) -> torch.device:
+    if not no_cuda and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 def main():
     parser = ArgumentParser()
@@ -42,8 +46,12 @@ def main():
     parser.add_argument('--eval_num_bootstrap', type=int, default=50)
     parser.add_argument('--eval_logfile', type=str, default=None)
 
+    parser.add_argument('--no-cuda', action='store_true', default=False)
+    parser.add_argument('--wandb-project', type=str, default='gp-highdim')
+    parser.add_argument('--wandb-entity', type=str, default=None)
+
     args = parser.parse_args()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device(args.no_cuda)
 
     with open(f'configs/gp/{args.model}.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -57,6 +65,10 @@ def main():
                     f'{args.dimension}D',
                     args.model,
                     f'min{args.min_num_points}_max{args.max_num_points}_{int(args.num_steps / 10000)}')
+
+    # Initialize W&B
+    if args.mode == 'train':
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=args.__dict__, name=f"{args.model}-{args.dimension}D")
 
     if not osp.isdir(root):
         os.makedirs(root)
@@ -153,11 +165,11 @@ def train(
     if resume:
         # load check point
         ckpt = torch.load(osp.join(root, 'ckpt.tar'), map_location=device)
-        model.load_state_dict(ckpt.model)
-        optimizer.load_state_dict(ckpt.optimizer)
-        scheduler.load_state_dict(ckpt.scheduler)
-        logfilename = ckpt.logfilename
-        start_step = ckpt.step
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
+        logfilename = ckpt['logfilename']
+        start_step = ckpt['step']
 
     else:
         logfilename = osp.join(root, f'train_{time.strftime("%Y%m%d-%H%M")}.log')
@@ -189,7 +201,9 @@ def train(
         for key, val in outs.items():
             ravg.update(key, val)
 
-        if step % print_freq == 0:
+            # Log to W&B
+            wandb.log(ravg.get_dict(), step=step)
+
             line = f"{model.__class__.__name__.lower()}: step {step} "
             line += f"lr {optimizer.param_groups[0]['lr']:.3e} "
             line += ravg.info()
@@ -198,12 +212,12 @@ def train(
             ravg.reset()
 
         if step % save_freq == 0 or step == num_steps:
-            ckpt = AttrDict()
-            ckpt.model = model.state_dict()
-            ckpt.optimizer = optimizer.state_dict()
-            ckpt.scheduler = scheduler.state_dict()
-            ckpt.logfilename = logfilename
-            ckpt.step = step + 1
+            ckpt = {}
+            ckpt['model'] = model.state_dict()
+            ckpt['optimizer'] = optimizer.state_dict()
+            ckpt['scheduler'] = scheduler.state_dict()
+            ckpt['logfilename'] = logfilename
+            ckpt['step'] = step + 1
             torch.save(ckpt, osp.join(root, "ckpt.tar"))
 
             if step in [100000, 150000, 200000, 250000, 300000]:
@@ -264,7 +278,7 @@ def eval(
 ):
     if mode == "eval":
         ckpt = torch.load(osp.join(root, "ckpt.tar"), map_location=device)
-        model.load_state_dict(ckpt.model)
+        model.load_state_dict(ckpt['model'])
 
         if eval_logfile is None:
             eval_logfile = f"eval_rbf_dim{dim_problem}.log"
@@ -299,7 +313,7 @@ def eval(
     ravg = RunningAverage()
     model.eval()
     with torch.no_grad():
-        for batch in tqdm.tqdm(eval_batches, ascii=True):
+        for batch in tqdm(eval_batches, ascii=True):
             for key, val in batch.items():
                 batch[key] = val.to(device)
 

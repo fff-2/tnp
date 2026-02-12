@@ -1,12 +1,7 @@
-import os
-import os.path as osp
-import numpy as np
-import yaml
-import torch
-import time
-import matplotlib.pyplot as plt
+import argparse
+import wandb
+import sys
 
-from attrdict import AttrDict
 from tqdm import tqdm
 
 from data.wheel import sample_wheel_data, WheelBanditSampler
@@ -15,12 +10,24 @@ from utils.log import get_logger, RunningAverage, plot_log
 from runner import evalsets_path, results_path, datasets_path
 
 
+def get_device(no_cuda: bool = False) -> torch.device:
+    if not no_cuda and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 def cmab(args):
     args.expconfig = args.expid or "default"
     args.cmab_models = "models_" + args.model + ".yaml"
-    device = args.device
+    
+    device = get_device(args.no_cuda)
+    args.device = device
+
 
     if args.cmab_mode == 'train':
+        # Initialize W&B
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=args.__dict__, name=f"{args.model}-{args.expid}")
+
         name = args.model
         model_cls = getattr(load_module(f'models/{name}.py'), name.upper())  # ex. from models.cnp import CNP
         with open(osp.join("configs", f"{args.cmab_data}", f"{name}.yaml")) as g:
@@ -53,8 +60,8 @@ def cmab(args):
             if not osp.exists(file):
                 raise FileNotFoundError(file)
             else:
-                ckpt = torch.load(file)
-                model.load_state_dict(ckpt.model)
+                ckpt = torch.load(file, map_location=device)
+                model.load_state_dict(ckpt['model'])
 
         for i in range(args.cmab_eval_seed_start, args.cmab_eval_seed_end + 1):
             args.cmab_eval_seed = i
@@ -191,7 +198,8 @@ def get_plot_path(args):
 
 def train(args, model):
     torch.manual_seed(args.cmab_train_seed)
-    torch.cuda.manual_seed(args.cmab_train_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(args.cmab_train_seed)
 
     dataset = get_bandit_dataset(args)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -199,12 +207,12 @@ def train(args, model):
     device = args.device
 
     if args.resume:
-        ckpt = torch.load(os.path.join(args.root, f'ckpt.tar'))
-        model.load_state_dict(ckpt.model)
-        optimizer.load_state_dict(ckpt.optimizer)
-        scheduler.load_state_dict(ckpt.scheduler)
-        logfilename = ckpt.logfilename
-        start_step = ckpt.step
+        ckpt = torch.load(os.path.join(args.root, f'ckpt.tar'), map_location=device)
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
+        logfilename = ckpt['logfilename']
+        start_step = ckpt['step']
     else:
         args.start_time = time.strftime("%Y%m%d-%H%M")
         logfilename = os.path.join(args.root, f'train_{args.start_time}.log')
@@ -216,9 +224,10 @@ def train(args, model):
     logger = get_logger(logfilename)
     ravg = RunningAverage()
 
-    logger.info(f"Experiment: Bandit Train | {args.expid}")
-    logger.info(f"Device: {device}\n")
-    logger.info(f'Total number of parameters: {sum(p.numel() for p in model.parameters())}\n')
+    if not args.resume:
+        logger.info(f"Experiment: Bandit Train | {args.expid}")
+        logger.info(f"Device: {device}\n")
+        logger.info(f'Total number of parameters: {sum(p.numel() for p in model.parameters())}\n')
 
     for step in range(start_step, args.num_epochs + 1):
         model.train()
@@ -245,6 +254,9 @@ def train(args, model):
                 ravg.update(key, val)
 
         if step % args.print_freq == 0:
+            # Log to W&B
+            wandb.log(ravg.get_dict(), step=step)
+
             _, filename = get_trainset_path(args)
             line = f'[model] {model._get_name()}-{filename} [step] {step} '
             line += f'[lr] {optimizer.param_groups[0]["lr"]:.3e} '
@@ -254,12 +266,12 @@ def train(args, model):
             ravg.reset()
 
         if step % args.save_freq == 0 or step == args.num_epochs:
-            ckpt = AttrDict()
-            ckpt.model = model.state_dict()
-            ckpt.optimizer = optimizer.state_dict()
-            ckpt.scheduler = scheduler.state_dict()
-            ckpt.logfilename = logfilename
-            ckpt.step = step + 1
+            ckpt = {}
+            ckpt['model'] = model.state_dict()
+            ckpt['optimizer'] = optimizer.state_dict()
+            ckpt['scheduler'] = scheduler.state_dict()
+            ckpt['logfilename'] = logfilename
+            ckpt['step'] = step + 1
             if not osp.exists(args.root):
                 os.makedirs(args.root, exist_ok=True)
             torch.save(ckpt, os.path.join(args.root, f'ckpt.tar'))
@@ -273,7 +285,8 @@ def train(args, model):
 
 def eval(args, models):
     torch.manual_seed(0)
-    torch.cuda.manual_seed(0)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(0)
     np.random.seed(0)
 
     _dataset = get_bandit_dataset(args)

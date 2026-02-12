@@ -1,13 +1,15 @@
 import argparse
 
-
 def get_args():
     parser = argparse.ArgumentParser()
 
     # Experiment
     parser.add_argument('--expid', type=str, default=None)
     parser.add_argument('--resume', type=str, default=None)
-    parser.add_argument('--device', type=str, default='cuda') # 'cpu' to use cpu
+    parser.add_argument('--no-cuda', action='store_true', default=False)
+    parser.add_argument('--wandb-project', type=str, default='contextual-bandits')
+    parser.add_argument('--wandb-entity', type=str, default=None)
+    parser.add_argument('--save-path', type=str, default=None)
 
     # wheel
     parser.add_argument("--cmab_data", choices=["wheel"], default="wheel")

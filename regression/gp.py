@@ -1,13 +1,12 @@
-import os
-import os.path as osp
 import argparse
+import sys
 import yaml
 import torch
 import numpy as np
 import time
 import matplotlib.pyplot as plt
 import uncertainty_toolbox as uct
-from attrdict import AttrDict
+import wandb
 from tqdm import tqdm
 from copy import deepcopy
 
@@ -16,6 +15,11 @@ from utils.misc import load_module
 from utils.paths import results_path, evalsets_path
 from utils.log import get_logger, RunningAverage
 
+def get_device(no_cuda: bool = False) -> torch.device:
+    if not no_cuda and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -23,6 +27,9 @@ def main():
     parser.add_argument('--mode', default='train', choices=['train', 'eval', 'eval_all_metrics', 'plot'])
     parser.add_argument('--expid', type=str, default='default')
     parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--no-cuda', action='store_true', default=False)
+    parser.add_argument('--wandb-project', type=str, default='gp-regression')
+    parser.add_argument('--wandb-entity', type=str, default=None)
 
     # Data
     parser.add_argument('--max_num_points', type=int, default=50)
@@ -40,6 +47,8 @@ def main():
     parser.add_argument('--print_freq', type=int, default=200)
     parser.add_argument('--eval_freq', type=int, default=5000)
     parser.add_argument('--save_freq', type=int, default=1000)
+    parser.add_argument('--save-path', type=str, default=None)
+    parser.add_argument('--lr-scheduler', action='store_true', default=True)
 
     # Eval
     parser.add_argument('--eval_seed', type=int, default=0)
@@ -62,7 +71,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.expid is not None:
+    if args.save_path:
+        args.root = args.save_path
+    elif args.expid is not None:
         args.root = osp.join(results_path, 'gp', args.model, args.expid)
     else:
         args.root = osp.join(results_path, 'gp', args.model)
@@ -71,20 +82,27 @@ def main():
     with open(f'configs/gp/{args.model}.yaml', 'r') as f:
         config = yaml.safe_load(f)
 
+    device = get_device(args.no_cuda)
+    
+    # Initialize W&B
+    if args.mode == 'train':
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=args.__dict__, name=f"{args.model}-{args.expid}")
+
     if args.model in ["np", "anp", "cnp", "canp", "bnp", "banp", "tnpd", "tnpa", "tnpnd"]:
         model = model_cls(**config)
-    model.cuda()
+    
+    model.to(device)
 
     if args.mode == 'train':
-        train(args, model)
+        train(args, model, device)
     elif args.mode == 'eval':
-        eval(args, model)
+        eval(args, model, device)
     elif args.mode == 'eval_all_metrics':
-        eval_all_metrics(args, model)
+        eval_all_metrics(args, model, device)
     elif args.mode == 'plot':
-        plot(args, model)
+        plot(args, model, device)
 
-def train(args, model):
+def train(args, model, device):
     if osp.exists(args.root + '/ckpt.tar'):
         if args.resume is None:
             raise FileExistsError(args.root)
@@ -100,20 +118,25 @@ def train(args, model):
         gen_evalset(args)
 
     torch.manual_seed(args.train_seed)
-    torch.cuda.manual_seed(args.train_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(args.train_seed)
 
     sampler = GPSampler(RBFKernel())
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    if args.lr_scheduler:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=args.num_steps)
+    else:
+        scheduler = None
 
     if args.resume:
-        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'))
-        model.load_state_dict(ckpt.model)
-        optimizer.load_state_dict(ckpt.optimizer)
-        scheduler.load_state_dict(ckpt.scheduler)
-        logfilename = ckpt.logfilename
-        start_step = ckpt.step
+        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location=device)
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        if scheduler is not None and 'scheduler' in ckpt:
+            scheduler.load_state_dict(ckpt['scheduler'])
+        logfilename = ckpt['logfilename']
+        start_step = ckpt['step']
     else:
         logfilename = os.path.join(args.root,
                 f'train_{time.strftime("%Y%m%d-%H%M")}.log')
@@ -132,7 +155,7 @@ def train(args, model):
         batch = sampler.sample(
             batch_size=args.train_batch_size,
             max_num_points=args.max_num_points,
-            device='cuda')
+            device=device)
         
         if args.model in ["np", "anp", "cnp", "canp", "bnp", "banp"]:
             outs = model(batch, num_samples=args.train_num_samples)
@@ -141,12 +164,16 @@ def train(args, model):
 
         outs.loss.backward()
         optimizer.step()
-        scheduler.step()
+        if scheduler:
+            scheduler.step()
 
         for key, val in outs.items():
             ravg.update(key, val)
 
         if step % args.print_freq == 0:
+            # Log to W&B
+            wandb.log(ravg.get_dict(), step=step)
+
             line = f'{args.model}:{args.expid} step {step} '
             line += f'lr {optimizer.param_groups[0]["lr"]:.3e} '
             line += f"[train_loss] "
@@ -154,22 +181,23 @@ def train(args, model):
             logger.info(line)
 
             if step % args.eval_freq == 0:
-                line = eval(args, model)
+                line = eval(args, model, device)
                 logger.info(line + '\n')
 
             ravg.reset()
 
         if step % args.save_freq == 0 or step == args.num_steps:
-            ckpt = AttrDict()
-            ckpt.model = model.state_dict()
-            ckpt.optimizer = optimizer.state_dict()
-            ckpt.scheduler = scheduler.state_dict()
-            ckpt.logfilename = logfilename
-            ckpt.step = step + 1
+            ckpt = {}
+            ckpt['model'] = model.state_dict()
+            ckpt['optimizer'] = optimizer.state_dict()
+            if scheduler:
+                ckpt['scheduler'] = scheduler.state_dict()
+            ckpt['logfilename'] = logfilename
+            ckpt['step'] = step + 1
             torch.save(ckpt, os.path.join(args.root, 'ckpt.tar'))
 
     args.mode = 'eval'
-    eval(args, model)
+    eval(args, model, device)
 
 def get_eval_path(args):
     path = osp.join(evalsets_path, 'gp')
@@ -206,11 +234,11 @@ def gen_evalset(args):
         os.makedirs(path)
     torch.save(batches, osp.join(path, filename))
 
-def eval(args, model):
+def eval(args, model, device):
     # eval a trained model on log-likelihood
     if args.mode == 'eval':
-        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location='cuda')
-        model.load_state_dict(ckpt.model)
+        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location=device)
+        model.load_state_dict(ckpt['model'])
         if args.eval_logfile is None:
             eval_logfile = f'eval_{args.eval_kernel}'
             if args.t_noise is not None:
@@ -231,14 +259,15 @@ def eval(args, model):
 
     if args.mode == "eval":
         torch.manual_seed(args.eval_seed)
-        torch.cuda.manual_seed(args.eval_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(args.eval_seed)
 
     ravg = RunningAverage()
     model.eval()
     with torch.no_grad():
         for batch in tqdm(eval_batches, ascii=True):
             for key, val in batch.items():
-                batch[key] = val.cuda()
+                batch[key] = val.to(device)
             if args.model in ["np", "anp", "bnp", "banp"]:
                 outs = model(batch, args.eval_num_samples)
             else:
@@ -247,8 +276,14 @@ def eval(args, model):
             for key, val in outs.items():
                 ravg.update(key, val)
 
+    # Log eval metrics to W&B
+    if args.mode == 'train': # Only log if called during training
+         wandb.log({f"eval_{k}": v for k, v in ravg.get_dict().items()}, step=kwargs.get('step', None))
+
+
     torch.manual_seed(time.time())
-    torch.cuda.manual_seed(time.time())
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(time.time())
 
     line = f'{args.model}:{args.expid} {args.eval_kernel} '
     if args.t_noise is not None:
@@ -261,10 +296,10 @@ def eval(args, model):
     return line
 
 
-def eval_all_metrics(args, model):
+def eval_all_metrics(args, model, device):
     # eval a trained model on log-likelihood, rsme, calibration, and sharpness
-    ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location='cuda')
-    model.load_state_dict(ckpt.model)
+    ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location=device)
+    model.load_state_dict(ckpt['model'])
     if args.eval_logfile is None:
         eval_logfile = f'eval_{args.eval_kernel}'
         if args.t_noise is not None:
@@ -284,14 +319,15 @@ def eval_all_metrics(args, model):
 
     if args.mode == "eval_all_metrics":
         torch.manual_seed(args.eval_seed)
-        torch.cuda.manual_seed(args.eval_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(args.eval_seed)
 
     model.eval()
     with torch.no_grad():
         ravgs = [RunningAverage() for _ in range(4)] # 4 types of metrics
         for batch in tqdm(eval_batches, ascii=True):
             for key, val in batch.items():
-                batch[key] = val.cuda()
+                batch[key] = val.to(device)
             if args.model in ["np", "anp", "cnp", "canp", "bnp", "banp"]:
                 outs = model.predict(batch.xc, batch.yc, batch.xt, num_samples=args.eval_num_samples)
                 ll = model(batch, num_samples=args.eval_num_samples)
@@ -332,7 +368,8 @@ def eval_all_metrics(args, model):
                     ravg.update(k, batch_metric[k])
 
     torch.manual_seed(time.time())
-    torch.cuda.manual_seed(time.time())
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(time.time())
 
     line = f'{args.model}:{args.expid} {args.eval_kernel} '
     if args.t_noise is not None:
@@ -350,14 +387,14 @@ def eval_all_metrics(args, model):
     return line
 
 
-def plot(args, model):
+def plot(args, model, device):
     seed = args.plot_seed
     num_smp = args.plot_num_samples
 
     if args.mode == "plot":
-        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location='cuda')
-        model.load_state_dict(ckpt.model)
-    model = model.cuda()
+        ckpt = torch.load(os.path.join(args.root, 'ckpt.tar'), map_location=device)
+        model.load_state_dict(ckpt['model'])
+    model = model.to(device)
 
     def tnp(x):
         return x.squeeze().cpu().data.numpy()
@@ -365,16 +402,17 @@ def plot(args, model):
     kernel = RBFKernel()
     sampler = GPSampler(kernel, t_noise=args.t_noise, seed=args.eval_seed)
 
-    xp = torch.linspace(-2, 2, 200).cuda()
+    xp = torch.linspace(-2, 2, 200).to(device)
     batch = sampler.sample(
         batch_size=args.plot_batch_size,
         num_ctx=args.plot_num_ctx,
         num_tar=args.plot_num_tar,
-        device='cuda',
+        device=device,
     )
 
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
 
     Nc = batch.xc.size(1)
     Nt = batch.xt.size(1)

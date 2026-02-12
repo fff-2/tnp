@@ -1,20 +1,19 @@
 import numpy as np
 import torch
 
-from attrdict import AttrDict
 from botorch.acquisition import AnalyticAcquisitionFunction
 from botorch.utils.transforms import t_batch_mode_transform
 from torch import Tensor
 from torch.distributions import Normal
 from torch.nn import Module
-from typing import Union
+from typing import Union, Dict, Any
 
 
 class EI(AnalyticAcquisitionFunction):
     def __init__(
             self,
             model: Module,
-            observations: AttrDict,
+            observations: Dict[str, Any],
             best_f: Union[float, Tensor],
             num_bs: int = 200,
             maximize: bool = True
@@ -33,8 +32,8 @@ class EI(AnalyticAcquisitionFunction):
     def forward(self, X: Tensor) -> Tensor:
         self.best_f = self.best_f.to(X)
 
-        posterior = self.model.predict(xc=self.obs.xc,
-                                        yc=self.obs.yc,
+        posterior = self.model.predict(xc=self.obs['xc'],
+                                        yc=self.obs['yc'],
                                         xt=X,
                                         num_samples=self.num_bs)
         mean, std = posterior.mean.squeeze(0), posterior.scale.squeeze(0)
@@ -62,7 +61,7 @@ class UCB(AnalyticAcquisitionFunction):
     def __init__(
             self,
             model: Module,
-            observations: AttrDict,
+            observations: Dict[str, Any],
             beta: Union[float, Tensor],
             num_bs: int = 200,
             maximize: bool = True
@@ -81,8 +80,8 @@ class UCB(AnalyticAcquisitionFunction):
     def forward(self, X: Tensor, return_mean=False) -> Tensor:
         self.beta = self.beta.to(X)
 
-        posterior = self.model.predict(xc=self.obs.xc,
-                                        yc=self.obs.yc,
+        posterior = self.model.predict(xc=self.obs['xc'],
+                                        yc=self.obs['yc'],
                                         xt=X,
                                         num_samples=self.num_bs)
         mean, std = posterior.mean.squeeze(0), posterior.scale.squeeze(0)

@@ -6,8 +6,9 @@ import time
 import torch
 import tqdm
 import yaml
+import wandb
+import sys
 from argparse import ArgumentParser
-from attrdict import AttrDict
 from botorch.acquisition import UpperConfidenceBound, ExpectedImprovement
 from botorch.fit import fit_gpytorch_model
 from botorch.models import SingleTaskGP
@@ -27,6 +28,11 @@ from utils.acquisition import UCB, EI
 from utils.misc import load_module
 
 from utils.paths import results_path
+
+def get_device(no_cuda: bool = False) -> torch.device:
+    if not no_cuda and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 def main():
     parser = ArgumentParser()
@@ -61,10 +67,18 @@ def main():
     parser.add_argument('--num_initial_design', type=int, default=1)
     parser.add_argument('--num_bootstrap', type=int, default=200)
     parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--no-cuda', action='store_true', default=False)
+    parser.add_argument('--wandb-project', type=str, default='bo-highdim')
+    parser.add_argument('--wandb-entity', type=str, default=None)
 
     args = parser.parse_args()
 
+    device = get_device(args.no_cuda)
+    
     if args.mode == 'bo':
+        # Initialize W&B
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=args.__dict__, name=f"{args.model}-{args.objective}")
+
         if args.model == 'gp':
             gp(
                 obj_func=args.objective,
@@ -74,7 +88,8 @@ def main():
                 num_task=args.num_task,
                 num_iter=args.num_iter,
                 num_initial_design=args.num_initial_design,
-                seed=args.seed
+                seed=args.seed,
+                device=device
             )
         else:
             bo(
@@ -91,7 +106,8 @@ def main():
                 num_iter=args.num_iter,
                 num_initial_design=args.num_initial_design,
                 num_bootstrap=args.num_bootstrap,
-                seed=args.seed
+                seed=args.seed,
+                device=device
             )
 
     elif args.mode == 'plot':
@@ -112,11 +128,11 @@ def gp(
         num_task: int = 100,
         num_iter: int = 50,
         num_initial_design: int = 1,
-        seed: int = 42
+        seed: int = 42,
+        device: torch.device = torch.device('cuda')
 ):
     assert isinstance(dim_problem, int) and (dim_problem > 0)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     root = osp.join(result_path, 'highdim_bo', f'{obj_func}_{dim_problem}d', 'gp', 'matern_gamma')
     if not osp.isdir(root):
         os.makedirs(root)
@@ -165,7 +181,8 @@ def gp(
         seed_ = seed * i
 
         torch.manual_seed(seed_)
-        torch.cuda.manual_seed(seed_)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed_)
         np.random.seed(seed_)
 
         global_min = obj.global_minimum
@@ -262,11 +279,10 @@ def bo(
         num_iter: int = 50,
         num_initial_design: int = 1,
         num_bootstrap: int = 200,
-        seed: int = 42
+        seed: int = 42,
+        device: torch.device = torch.device('cuda')
 ):
     assert isinstance(dim_problem, int) and (dim_problem > 0)
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     with open(f'configs/gp/{model_name}.yaml', 'r') as file:
         config = yaml.safe_load(file)
@@ -334,7 +350,8 @@ def bo(
         seed_ = seed * i
 
         torch.manual_seed(seed_)
-        torch.cuda.manual_seed(seed_)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed_)
         np.random.seed(seed_)
 
         global_min = obj.global_minimum
@@ -344,10 +361,10 @@ def bo(
         x = torch.tensor(x, dtype=torch.float, device=device).unsqueeze(0)
         y = torch.tensor(y, dtype=torch.float, device=device).unsqueeze(0)
 
-        batch = AttrDict()
-        batch.xc = x
-        batch.yc = y
-        min_values = [batch.yc.min().cpu().numpy().item()]
+        batch = {}
+        batch['xc'] = x
+        batch['yc'] = y
+        min_values = [batch['yc'].min().cpu().numpy().item()]
 
         if acq_func == 'ucb':
             acq = UCB(
@@ -387,9 +404,9 @@ def bo(
             y_new = torch.tensor(obj.output(new_point.cpu().numpy()),
                                  dtype=torch.float, device=device).unsqueeze(0)
 
-            batch.xc = torch.cat([batch.xc, x_new], dim=-2)
-            batch.yc = torch.cat([batch.yc, y_new], dim=-2)
-            current_min = batch.yc.min()
+            batch['xc'] = torch.cat([batch['xc'], x_new], dim=-2)
+            batch['yc'] = torch.cat([batch['yc'], y_new], dim=-2)
+            current_min = batch['yc'].min()
             min_values.append(current_min.cpu().numpy().item())
 
             acq.obs = batch
