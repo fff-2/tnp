@@ -53,7 +53,7 @@ class TNPA(TNP):
         if xc.shape[-3] != xt.shape[-3]:
             xt = xt.transpose(-3, -2)
 
-        batch = AttrDict()
+        batch = {}
         batch['xc'] = xc
         batch['yc'] = yc
         batch['xt'] = xt

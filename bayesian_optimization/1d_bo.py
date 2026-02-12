@@ -1,4 +1,6 @@
 import argparse
+import os
+import os.path as osp
 import sys
 import yaml
 import torch
@@ -16,6 +18,16 @@ from bayeso.utils.utils_gp import get_prior_mu
 from data.gp import *
 from utils.misc import load_module
 from utils.paths import results_path
+
+def get_latest_expid(task_dir):
+    """Find the most recent timestamped expid in the given directory."""
+    if not osp.isdir(task_dir):
+        return None
+    dirs = sorted(
+        [d for d in os.listdir(task_dir) if osp.isdir(osp.join(task_dir, d))],
+        reverse=True
+    )
+    return dirs[0] if dirs else None
 
 sns.set()
 
@@ -53,6 +65,20 @@ def main():
     parser.add_argument('--wandb-entity', type=str, default=None)
 
     args = parser.parse_args()
+
+    if args.expid is None:
+        if args.bo_mode == 'oracle':
+            args.expid = time.strftime('%Y%m%d-%H%M')
+        else:
+            # For model-based BO, find the latest regression GP experiment
+            task_dir = osp.join(results_path, 'gp', args.model)
+            latest = get_latest_expid(task_dir)
+            if latest is None:
+                raise FileNotFoundError(
+                    f'No trained regression GP model found in {task_dir}. '
+                    f'Train one first with: ./scripts/train/train_gp.sh --model {args.model}')
+            args.expid = latest
+            print(f'Using latest regression GP expid: {args.expid}')
 
     # args.str_cov = 'se'
     args.num_task = 100

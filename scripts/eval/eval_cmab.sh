@@ -14,10 +14,9 @@ WANDB_ENTITY=""
 
 # Task Specifics
 TASK="wheeler" # Options: wheeler, etc.
-EXPID="default"
-RESUME_PATH=""
+# EXPID is not set here — defaults to the latest timestamped run if not passed via "$@"
 
-echo "Running CMAB Evaluation with Model: $MODEL on Task: $TASK ExpId: $EXPID"
+echo "Running CMAB Evaluation with Model: $MODEL on Task: $TASK"
 
 python3 contextual_bandits/main.py \
     --cmab_mode eval \
@@ -28,7 +27,6 @@ python3 contextual_bandits/main.py \
     --lr "$LEARNING_RATE" \
     --num-iter "$NUM_ITER" \
     --seed "$SEED" \
-    --expid "$EXPID" \
     --wandb-project "$WANDB_PROJECT" \
     --wandb-entity "$WANDB_ENTITY" \
     "$@"

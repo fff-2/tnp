@@ -87,11 +87,11 @@ class TNPA(TNP):
         if self.permute:
             xt_stacked, yt_stacked, dim_sample, dim_batch, deperm_ids = self.permute_sample_batch(xt_stacked, yt_stacked, num_samples, batch_size, num_target)
 
-        batch_stacked = AttrDict()
-        batch_stacked.xc = squeeze(xc_stacked)
-        batch_stacked.yc = squeeze(yc_stacked)
-        batch_stacked.xt = squeeze(xt_stacked)
-        batch_stacked.yt = squeeze(yt_stacked)
+        batch_stacked = {}
+        batch_stacked['xc'] = squeeze(xc_stacked)
+        batch_stacked['yc'] = squeeze(yc_stacked)
+        batch_stacked['xt'] = squeeze(xt_stacked)
+        batch_stacked['yt'] = squeeze(yt_stacked)
 
         for step in range(xt.shape[1]):
             z_target_stacked = self.encode(batch_stacked, autoreg=True)
@@ -102,15 +102,15 @@ class TNPA(TNP):
             else:
                 std = torch.exp(std)
             mean, std = unsqueeze(mean), unsqueeze(std)
-            batch_stacked.yt = unsqueeze(batch_stacked.yt)
-            batch_stacked.yt[:, :, step] = Normal(mean[:, :, step], std[:, :, step]).sample()
-            batch_stacked.yt = squeeze(batch_stacked.yt)
+            batch_stacked['yt'] = unsqueeze(batch_stacked['yt'])
+            batch_stacked['yt'][:, :, step] = Normal(mean[:, :, step], std[:, :, step]).sample()
+            batch_stacked['yt'] = squeeze(batch_stacked['yt'])
 
         if self.permute:
             mean, std = mean[dim_sample, dim_batch, deperm_ids], std[dim_sample, dim_batch, deperm_ids]
 
         if return_samples:
-            return unsqueeze(batch_stacked.yt)
+            return unsqueeze(batch_stacked['yt'])
 
         return Normal(mean, std)
 

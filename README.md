@@ -14,41 +14,65 @@ git clone https://github.com/tung-nd/TNP-pytorch.git
 
 Then install the dependencies:
 
-```
+```bash
 conda create -n tnp python==3.10
 conda activate tnp
 pip install -r requirements.txt
 wandb login
 ```
 
+## Project Structure
+
+```
+tnp/
+├── regression/          # 1D GP, CelebA, EMNIST regression tasks
+├── bayesian_optimization/  # 1D and high-dim Bayesian optimization
+├── contextual_bandits/  # Contextual multi-armed bandits (Wheel)
+├── scripts/
+│   ├── train/           # Training shell scripts
+│   └── eval/            # Evaluation shell scripts
+├── results/             # Saved model checkpoints and logs
+├── evalsets/            # Generated evaluation datasets
+└── datasets/            # Raw/processed datasets
+```
+
+## Supported Models
+
+| Model | Key |
+|---|---|
+| Conditional Neural Process | `cnp` |
+| Conditional Attentive Neural Process | `canp` |
+| Neural Process | `np` |
+| Attentive Neural Process | `anp` |
+| Bootstrapping Neural Process | `bnp` |
+| Bootstrapping Attentive Neural Process | `banp` |
+| Transformer Neural Process (Deterministic) | `tnpd` |
+| Transformer Neural Process (Attentive) | `tnpa` |
+| Transformer Neural Process (Non-Deterministic) | `tnpnd` |
+
 ## Usage
 
-We provide modular shell scripts for training and evaluation in the `scripts/` directory.
+We provide modular shell scripts for training and evaluation in the `scripts/` directory. Each script has configurable variables at the top and accepts additional arguments via `"$@"`.
 
 For detailed instructions on each task, please refer to the specific READMEs:
-- [Regression Tasks](regression/README.md)
-- [Contextual Bandits](contextual_bandits/README.md)
-- [Bayesian Optimization](bayesian_optimization/README.md)
+- [Regression Tasks](regression/README.md) — GP, CelebA, EMNIST
+- [Bayesian Optimization](bayesian_optimization/README.md) — 1D and high-dim BO
+- [Contextual Bandits](contextual_bandits/README.md) — Wheel bandit
 
 ### Training
 
-To train models for different tasks, use the corresponding script in `scripts/train/`:
-
 ```bash
-# CelebA
+# GP Regression (also used as 1D BO surrogate)
+./scripts/train/train_gp.sh
+
+# CelebA Image Completion
 ./scripts/train/train_celeba.sh
 
-# EMNIST
+# EMNIST Image Completion
 ./scripts/train/train_emnist.sh
-
-# GP Regression
-./scripts/train/train_gp.sh
 
 # Contextual Bandits
 ./scripts/train/train_cmab.sh
-
-# 1D Bayesian Optimization (GP surrogate training)
-./scripts/train/train_bo_gp_1d.sh
 
 # High-Dim Bayesian Optimization (GP surrogate training)
 ./scripts/train/train_bo_gp_highdim.sh
@@ -56,19 +80,21 @@ To train models for different tasks, use the corresponding script in `scripts/tr
 
 ### Evaluation
 
-Similarly, use the evaluation scripts:
+Evaluation scripts run `eval_all_metrics` mode (accuracy, calibration, sharpness, scoring rules) followed by `plot` mode to save figures automatically.
+
+If `--expid` is not specified, the scripts **automatically use the latest experiment** found in the results directory.
 
 ```bash
-# CelebA Evaluation
-./scripts/eval/eval_celeba.sh
-
-# EMNIST Evaluation
-./scripts/eval/eval_emnist.sh
-
-# GP Regression Evaluation
+# GP Regression — eval_all_metrics + plot
 ./scripts/eval/eval_gp.sh
 
-# Contextual Bandits Evaluation
+# CelebA — eval_all_metrics + plot
+./scripts/eval/eval_celeba.sh
+
+# EMNIST — eval_all_metrics + plot
+./scripts/eval/eval_emnist.sh
+
+# Contextual Bandits
 ./scripts/eval/eval_cmab.sh
 
 # 1D BO Loop
@@ -78,7 +104,31 @@ Similarly, use the evaluation scripts:
 ./scripts/eval/run_bo_highdim.sh
 ```
 
-You can customize the hyperparameters by editing the variable definitions at the top of each script.
+To evaluate a specific experiment:
+```bash
+./scripts/eval/eval_gp.sh --expid 20260212-2030
+```
+
+### Resuming Training
+
+If training was interrupted, resume from the last checkpoint using `--resume`:
+
+```bash
+./scripts/train/train_gp.sh --expid 20260212-2030 --resume 20260212-2030
+```
+
+The `--resume` flag loads the saved model weights, optimizer state, scheduler state, and step counter from `results/{task}/{model}/{expid}/ckpt.tar`.
+
+### Weights & Biases Integration
+
+W&B is initialized automatically during training. Configure via:
+
+| Argument | Description | Default |
+|---|---|---|
+| `--wandb-project` | W&B project name | task-specific |
+| `--wandb-entity` | W&B team/user | `None` |
+
+Run `wandb login` before first use.
 
 ## Acknowledgement
 

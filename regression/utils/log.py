@@ -54,6 +54,9 @@ class RunningAverage(object):
         assert(self.sum.get(key, None) is not None)
         return self.sum[key] / self.cnt[key]
 
+    def get_dict(self):
+        return {key: self.sum[key] / self.cnt[key] for key in self.sum.keys()}
+
     def info(self, show_et=True):
         line = ''
         for key in self.sum.keys():

@@ -102,7 +102,7 @@ class TNPND(TNP):
         dim_y = yc.shape[-1]
         num_target = xt.shape[1]
 
-        batch = AttrDict()
+        batch = {}
         batch['xc'] = xc
         batch['yc'] = yc
         batch['xt'] = xt

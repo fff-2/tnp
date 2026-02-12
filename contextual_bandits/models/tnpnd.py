@@ -96,7 +96,7 @@ class TNPND(TNP):
 
 
     def predict(self, xc, yc, xt, num_samples=100):
-        batch = AttrDict()
+        batch = {}
         batch['xc'] = xc
         batch['yc'] = yc
         batch['xt'] = xt

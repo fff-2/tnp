@@ -68,6 +68,9 @@ class RunningAverage(object):
             line += f'({time.time()-self.clock:.3f} secs)'
         return line
 
+    def get_dict(self):
+        return {key: self.sum[key] / self.cnt[key] for key in self.sum.keys()}
+
 
 def get_log(fileroot):
     step = []

@@ -58,7 +58,7 @@ class TNPD(TNP):
         return outs
 
     def predict(self, xc, yc, xt):
-        batch = AttrDict()
+        batch = {}
         batch['xc'] = xc
         batch['yc'] = yc
         batch['xt'] = xt

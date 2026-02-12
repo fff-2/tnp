@@ -4,7 +4,6 @@ import logging
 import yaml
 import os
 import os.path as osp
-from attrdict import AttrDict
 from collections import OrderedDict
 from matplotlib import pyplot as plt
 from os.path import split, splitext
@@ -57,6 +56,9 @@ class RunningAverage(object):
     def get(self, key):
         assert(self.sum.get(key, None) is not None)
         return self.sum[key] / self.cnt[key]
+
+    def get_dict(self):
+        return {key: self.sum[key] / self.cnt[key] for key in self.sum.keys()}
 
     def info(self, show_et=True):
         line = ''

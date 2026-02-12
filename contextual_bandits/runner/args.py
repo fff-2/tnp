@@ -1,4 +1,7 @@
 import argparse
+import time
+import os
+import os.path as osp
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -39,5 +42,31 @@ def get_args():
     parser.add_argument('--save_freq', type=int, default=1000)
 
     args = parser.parse_args()
+
+    if args.expid is None:
+        if args.cmab_mode == 'train':
+            args.expid = time.strftime('%Y%m%d-%H%M')
+        else:
+            # For eval modes, default to the latest timestamped run
+            from runner import results_path
+            task_dir = osp.join(results_path, args.cmab_data, f'train-{args.cmab_train_reward}-R', args.model)
+            if osp.isdir(task_dir):
+                dirs = sorted(
+                    [d for d in os.listdir(task_dir) if osp.isdir(osp.join(task_dir, d))],
+                    reverse=True
+                )
+                if dirs:
+                    # Find the first dir that has subdirs (actual expids are nested)
+                    for d in dirs:
+                        subdirs = sorted(
+                            [s for s in os.listdir(osp.join(task_dir, d)) if osp.isdir(osp.join(task_dir, d, s))],
+                            reverse=True
+                        )
+                        if subdirs:
+                            args.expid = subdirs[0]
+                            print(f'Using latest expid: {args.expid}')
+                            break
+            if args.expid is None:
+                args.expid = time.strftime('%Y%m%d-%H%M')
 
     return args

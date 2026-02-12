@@ -9,6 +9,16 @@ from utils.misc import load_module
 from utils.log import get_logger, RunningAverage, plot_log
 from runner import evalsets_path, results_path, datasets_path
 
+def get_latest_expid(task_dir):
+    """Find the most recent timestamped expid in the given directory."""
+    if not osp.isdir(task_dir):
+        return None
+    dirs = sorted(
+        [d for d in os.listdir(task_dir) if osp.isdir(osp.join(task_dir, d))],
+        reverse=True
+    )
+    return dirs[0] if dirs else None
+
 
 def get_device(no_cuda: bool = False) -> torch.device:
     if not no_cuda and torch.cuda.is_available():
@@ -46,7 +56,7 @@ def cmab(args):
             yaml.dump(args.__dict__, f)
         train(args, model)
 
-    if args.cmab_mode == "eval":
+    if args.cmab_mode == \"eval\":
         args.num_contexts = 2000
         path, filename = get_train_path(args)
         name = args.model

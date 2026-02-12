@@ -2,24 +2,26 @@
 
 # Evaluation Configuration for GP Regression
 MODEL="tnpd"
-EXPID="default"
-RESUME_PATH=""
+# EXPID is not set here — defaults to the latest timestamped run if not passed via "$@"
 
 # Eval Parameters
 EVAL_NUM_BATCHES=3000
 EVAL_BATCH_SIZE=16
 EVAL_NUM_SAMPLES=50
-EVAL_LOGFILE="eval_gp.log"
 
-echo "Running GP Regression evaluation with Model: $MODEL ExpId: $EXPID"
+echo "Running GP Regression evaluation (eval_all_metrics) with Model: $MODEL"
 
 python3 regression/gp.py \
-    --mode eval \
+    --mode eval_all_metrics \
     --model "$MODEL" \
-    --expid "$EXPID" \
     --eval_num_batches "$EVAL_NUM_BATCHES" \
     --eval_batch_size "$EVAL_BATCH_SIZE" \
     --eval_num_samples "$EVAL_NUM_SAMPLES" \
-    --eval_logfile "$EVAL_LOGFILE" \
-    --resume "$RESUME_PATH" \
+    "$@"
+
+echo "Running GP Regression plot with Model: $MODEL"
+
+python3 regression/gp.py \
+    --mode plot \
+    --model "$MODEL" \
     "$@"

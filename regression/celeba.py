@@ -19,6 +19,16 @@ from utils.misc import load_module
 from utils.paths import results_path, evalsets_path
 from utils.log import get_logger, RunningAverage
 
+def get_latest_expid(task_dir):
+    """Find the most recent timestamped expid in the given directory."""
+    if not osp.isdir(task_dir):
+        return None
+    dirs = sorted(
+        [d for d in os.listdir(task_dir) if osp.isdir(osp.join(task_dir, d))],
+        reverse=True
+    )
+    return dirs[0] if dirs else None
+
 def get_device(no_cuda: bool = False) -> torch.device:
     if not no_cuda and torch.cuda.is_available():
         return torch.device("cuda")
@@ -29,7 +39,7 @@ def main():
 
     # Experiment
     parser.add_argument('--mode', choices=['train', 'eval', 'eval_all_metrics', 'plot', 'plot_samples'], default='train')
-    parser.add_argument('--expid', type=str, default='default')
+    parser.add_argument('--expid', type=str, default=None)
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--no-cuda', action='store_true', default=False)
     parser.add_argument('--wandb-project', type=str, default='celeba-regression')
@@ -72,6 +82,17 @@ def main():
     parser.add_argument('--t_noise', type=float, default=None)
 
     args = parser.parse_args()
+
+    if args.expid is None:
+        if args.mode == 'train':
+            args.expid = time.strftime('%Y%m%d-%H%M')
+        else:
+            task_dir = osp.join(results_path, 'celeba', args.model)
+            latest = get_latest_expid(task_dir)
+            if latest is None:
+                raise FileNotFoundError(f'No experiment found in {task_dir}')
+            args.expid = latest
+            print(f'Using latest expid: {args.expid}')
 
     if args.save_path:
          args.root = args.save_path
@@ -177,7 +198,7 @@ def train(args, model, device):
         logger.info(line)
 
         if epoch % args.eval_freq == 0:
-            logger.info(eval(args, model, device) + '\n')
+            logger.info(eval(args, model, device, step=epoch) + '\n')
 
         ravg.reset()
 
@@ -222,7 +243,7 @@ def gen_evalset(args):
             f'{args.t_noise}.tar'
     torch.save(batches, osp.join(path, filename))
 
-def eval(args, model, device):
+def eval(args, model, device, step=None):
     if args.mode == 'eval':
         ckpt = torch.load(osp.join(args.root, 'ckpt.tar'), map_location=device)
         model.load_state_dict(ckpt['model'])
@@ -270,7 +291,7 @@ def eval(args, model, device):
     
     # Log eval metrics to W&B
     if args.mode == 'train': # Only log if called during training
-         wandb.log({f"eval_{k}": v for k, v in ravg.get_dict().items()})
+         wandb.log({f"eval_{k}": v for k, v in ravg.get_dict().items()}, step=step)
 
     torch.manual_seed(time.time())
     if torch.cuda.is_available():
@@ -326,7 +347,7 @@ def eval_all_metrics(args, model, device):
                 outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
                 ll = model(batch)
 
-            mean, std = outs['loc'], outs['scale']
+            mean, std = outs.loc, outs.scale
 
             # shape: (num_samples, 1, num_points, 1)
             if mean.dim() == 4:
@@ -339,7 +360,7 @@ def eval_all_metrics(args, model, device):
 
             acc = uct.metrics.get_all_accuracy_metrics(mean, yt, verbose=False)
             sharpness = uct.metrics.get_all_sharpness_metrics(std, verbose=False)
-            scoring_rule = {'tar_ll': ll.tar_ll.item()}
+            scoring_rule = {'tar_ll': ll['tar_ll'].item()}
 
             batch_metrics = [acc, sharpness, scoring_rule]
             for i in range(len(batch_metrics)):

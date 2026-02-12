@@ -9,7 +9,7 @@ SEED=1
 
 # Model Configuration (if applicable, highdim_bo usually runs 'bo' mode which can use GP or other models)
 MODEL="tnpa" # Options: gp, or TNP models
-EXPID="default"
+# EXPID is not set here — defaults to the latest timestamped run if not passed via "$@"
 
 echo "Running High-Dim BO Loop Objective: $OBJECTIVE Dim: $DIMENSION Acq: $ACQ_FUNC"
 
