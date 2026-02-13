@@ -13,7 +13,7 @@ from copy import deepcopy
 from PIL import Image
 
 from data.image import img_to_task, task_to_img
-from data.emnist import EMNIST, KMNIST
+from data.emnist import EMNIST
 from utils.misc import load_module
 from utils.paths import results_path, evalsets_path
 from utils.log import get_logger, RunningAverage
@@ -73,8 +73,8 @@ def main():
 
     # Plot
     parser.add_argument('--plot_seed', type=int, default=1)
-    parser.add_argument('--plot_num_imgs', type=int, default=16)
-    parser.add_argument('--plot_num_samples', type=int, default=30)
+    parser.add_argument('--plot_num_imgs', type=int, default=8)
+    parser.add_argument('--plot_num_samples', type=int, default=1)
     parser.add_argument('--plot_num_bs', type=int, default=50)
     parser.add_argument('--plot_num_ctx', type=int, default=100)
     parser.add_argument('--start_time', type=str, default=None)
@@ -103,8 +103,8 @@ def main():
         args.root = osp.join(results_path, 'emnist', args.model)
 
 
-    model_cls = getattr(load_module(f'models/{args.model}.py'), args.model.upper())
-    with open(f'configs/emnist/{args.model}.yaml', 'r') as f:
+    model_cls = getattr(load_module(osp.join(osp.dirname(__file__), 'models', f'{args.model}.py')), args.model.upper())
+    with open(osp.join(osp.dirname(__file__), 'configs', 'emnist', f'{args.model}.yaml'), 'r') as f:
         config = yaml.safe_load(f)
     if args.pretrain:
         assert args.model == 'tnpa'
@@ -422,11 +422,11 @@ def plot(args, model, device):
     model.eval()
     with torch.no_grad():
         if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-            outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
+            outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.plot_num_samples)
         else:
             outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
 
-    mean = outs['mean']
+        mean = outs.mean
     # shape: (num_samples, 1, num_points, 1)
     if mean.dim() == 4:
         mean = mean.mean(dim=0)
@@ -442,10 +442,23 @@ def plot(args, model, device):
     save_dir = osp.join(args.root, f'plots_{c1}-{c2}')
     os.makedirs(save_dir, exist_ok=True)
 
+    # Combine images
+    width = args.plot_num_imgs * 128
+    height = 3 * 128
+    combined_image = Image.new('RGB', (width, height))
+
     for i in range(args.plot_num_imgs):
-        Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_orig.jpg' % (i+1))
-        Image.fromarray(task_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_task.jpg' % (i+1))
-        Image.fromarray(completed_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_completed.jpg' % (i+1))
+        orig = Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+        task = Image.fromarray(task_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+        comp = Image.fromarray(completed_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+
+        combined_image.paste(orig, (i*128, 0))
+        combined_image.paste(task, (i*128, 128))
+        combined_image.paste(comp, (i*128, 256))
+
+    save_path = osp.join(save_dir, 'combined.png')
+    combined_image.save(save_path)
+    print(f"Saved combined image to {save_path}")
 
 def plot_samples(args, model, device):
     if args.mode == 'plot_samples':

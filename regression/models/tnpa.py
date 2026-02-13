@@ -63,11 +63,11 @@ class TNPA(TNP):
 
     def permute_sample_batch(self, xt, yt, num_samples, batch_size, num_target):
         # data in each batch is permuted identically
-        perm_ids = torch.rand(num_samples, num_target, device=batch['xc'].device).unsqueeze(1).repeat((1, batch_size, 1))
+        perm_ids = torch.rand(num_samples, num_target, device=xt.device).unsqueeze(1).repeat((1, batch_size, 1))
         perm_ids = torch.argsort(perm_ids, dim=-1)
         deperm_ids = torch.argsort(perm_ids, dim=-1)
-        dim_sample = torch.arange(num_samples, device=batch['xc'].device).unsqueeze(-1).unsqueeze(-1).repeat((1,batch_size,num_target))
-        dim_batch = torch.arange(batch_size, device=batch['xc'].device).unsqueeze(0).unsqueeze(-1).repeat((num_samples,1,num_target))
+        dim_sample = torch.arange(num_samples, device=xt.device).unsqueeze(-1).unsqueeze(-1).repeat((1,batch_size,num_target))
+        dim_batch = torch.arange(batch_size, device=xt.device).unsqueeze(0).unsqueeze(-1).repeat((num_samples,1,num_target))
         return xt[dim_sample, dim_batch, perm_ids], yt[dim_sample, dim_batch, perm_ids], dim_sample, dim_batch, deperm_ids
 
     def predict(self, xc, yc, xt, num_samples=50, return_samples=False):
@@ -82,7 +82,7 @@ class TNPA(TNP):
         xc_stacked = stack(xc, num_samples)
         yc_stacked = stack(yc, num_samples)
         xt_stacked = stack(xt, num_samples)
-        yt_pred = torch.zeros((batch_size, num_target, yc.shape[2]), device=batch['xc'].device)
+        yt_pred = torch.zeros((batch_size, num_target, yc.shape[2]), device=xc.device)
         yt_stacked = stack(yt_pred, num_samples)
         if self.permute:
             xt_stacked, yt_stacked, dim_sample, dim_batch, deperm_ids = self.permute_sample_batch(xt_stacked, yt_stacked, num_samples, batch_size, num_target)
