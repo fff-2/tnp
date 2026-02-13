@@ -101,8 +101,8 @@ def main():
     else:
         args.root = osp.join(results_path, 'celeba', args.model)
 
-    model_cls = getattr(load_module(f'models/{args.model}.py'), args.model.upper())
-    with open(f'configs/celeba/{args.model}.yaml', 'r') as f:
+    model_cls = getattr(load_module(osp.join(osp.dirname(__file__), 'models', f'{args.model}.py')), args.model.upper())
+    with open(osp.join(osp.dirname(__file__), 'configs', 'celeba', f'{args.model}.yaml'), 'r') as f:
         config = yaml.safe_load(f)
 
     device = get_device(args.no_cuda)
@@ -407,11 +407,11 @@ def plot(args, model, device):
     model.eval()
     with torch.no_grad():
         if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-            outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
+            outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.plot_num_samples)
         else:
             outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
 
-    mean = outs['mean']
+    mean = outs.mean
     # shape: (num_samples, 1, num_points, 1)
     if mean.dim() == 4:
         mean = mean.mean(dim=0)
@@ -426,10 +426,23 @@ def plot(args, model, device):
     save_dir = osp.join(args.root, 'plots')
     os.makedirs(save_dir, exist_ok=True)
 
+    # Combine images
+    width = args.plot_num_imgs * 128
+    height = 3 * 128
+    combined_image = Image.new('RGB', (width, height))
+
     for i in range(args.plot_num_imgs):
-        Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_orig.jpg' % (i+1))
-        Image.fromarray(task_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_task.jpg' % (i+1))
-        Image.fromarray(completed_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_completed.jpg' % (i+1))
+        orig = Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+        task = Image.fromarray(task_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+        comp = Image.fromarray(completed_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+
+        combined_image.paste(orig, (i*128, 0))
+        combined_image.paste(task, (i*128, 128))
+        combined_image.paste(comp, (i*128, 256))
+
+    save_path = osp.join(save_dir, 'combined.png')
+    combined_image.save(save_path)
+    print(f"Saved combined image to {save_path}")
 
 
 def plot_samples(args, model, device):

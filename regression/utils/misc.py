@@ -2,6 +2,7 @@ import os
 import importlib.util
 import sys
 from types import ModuleType
+import torch
 
 def gen_load_func(parser, func):
     def load(args, cmdline):
