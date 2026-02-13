@@ -56,7 +56,7 @@ def cmab(args):
             yaml.dump(args.__dict__, f)
         train(args, model)
 
-    if args.cmab_mode == \"eval\":
+    if args.cmab_mode == "eval":
         args.num_contexts = 2000
         path, filename = get_train_path(args)
         name = args.model
