@@ -46,9 +46,9 @@ tnp/
 | Attentive Neural Process | `anp` |
 | Bootstrapping Neural Process | `bnp` |
 | Bootstrapping Attentive Neural Process | `banp` |
-| Transformer Neural Process (Deterministic) | `tnpd` |
-| Transformer Neural Process (Attentive) | `tnpa` |
-| Transformer Neural Process (Non-Deterministic) | `tnpnd` |
+| Transformer Neural Process (Autoregressive) | `tnpd` |
+| Transformer Neural Process (Diagonal) | `tnpa` |
+| Transformer Neural Process (Non-Diagonal) | `tnpnd` |
 
 ## Usage
 
