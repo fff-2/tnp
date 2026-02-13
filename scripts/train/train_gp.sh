@@ -5,7 +5,7 @@ NUM_STEPS=100000
 BATCH_SIZE=16
 LEARNING_RATE=5e-4
 SEED=0
-MODEL="tnpd"  # Options: np, anp, cnp, canp, bnp, banp, tnpa, tnpd, tnpnd
+MODEL="tnpa"  # Options: np, anp, cnp, canp, bnp, banp, tnpa, tnpd, tnpnd
 WANDB_PROJECT="tnp-gp"
 WANDB_ENTITY=""
 
