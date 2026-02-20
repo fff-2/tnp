@@ -7,6 +7,8 @@ import time
 import uncertainty_toolbox as uct
 import wandb
 import random
+import os
+import os.path as osp
 from tqdm import tqdm
 from copy import deepcopy
 from PIL import Image
@@ -38,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Experiment
-    parser.add_argument('--mode', choices=['train', 'eval', 'eval_all_metrics', 'plot', 'plot_samples'], default='train')
+    parser.add_argument('--mode', choices=['train', 'eval', 'eval_all_metrics', 'plot'], default='train')
     parser.add_argument('--expid', type=str, default=None)
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--no-cuda', action='store_true', default=False)
@@ -73,9 +75,8 @@ def main():
     # Plot
     parser.add_argument('--plot_seed', type=int, default=1)
     parser.add_argument('--plot_num_imgs', type=int, default=16)
-    parser.add_argument('--plot_num_samples', type=int, default=30)
+    parser.add_argument('--plot_num_samples', type=int, default=1)
     parser.add_argument('--plot_num_bs', type=int, default=50)
-    parser.add_argument('--plot_num_ctx', type=int, default=100)
     parser.add_argument('--start_time', type=str, default=None)
 
     # OOD settings
@@ -123,8 +124,6 @@ def main():
         eval_all_metrics(args, model, device)
     elif args.mode == 'plot':
         plot(args, model, device)
-    elif args.mode == 'plot_samples':
-        plot_samples(args, model, device)
 
 def train(args, model, device):
     if osp.exists(args.root + '/ckpt.tar'):
@@ -400,98 +399,50 @@ def plot(args, model, device):
     eval_ds = CelebA(train=False)
     torch.manual_seed(args.plot_seed)
     rand_ids = torch.randperm(len(eval_ds))[:args.plot_num_imgs]
+    list_num_ctx = [50, 100, 200, 400, 800]
     test_data = [eval_ds[i][0] for i in rand_ids]
     test_data = torch.stack(test_data, dim=0).to(device)
-    batch = img_to_task(test_data, max_num_points=None, num_ctx=args.plot_num_ctx, target_all=True)
-    
-    model.eval()
-    with torch.no_grad():
-        if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-            outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.plot_num_samples)
-        else:
-            outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
-
-    mean = outs.mean
-    # shape: (num_samples, 1, num_points, 1)
-    if mean.dim() == 4:
-        mean = mean.mean(dim=0)
-
-    task_img, completed_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], mean, shape=(3,32,32))
-    _, orig_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], batch['yt'], shape=(3,32,32))
-
-    task_img = (task_img * 255).int().cpu().numpy().transpose(0,2,3,1)
-    completed_img = (completed_img * 255).int().cpu().numpy().transpose(0,2,3,1)
-    orig_img = (orig_img * 255).int().cpu().numpy().transpose(0,2,3,1)
-
-    save_dir = osp.join(args.root, 'plots')
-    os.makedirs(save_dir, exist_ok=True)
-
-    # Combine images
-    width = args.plot_num_imgs * 128
-    height = 3 * 128
-    combined_image = Image.new('RGB', (width, height))
-
-    for i in range(args.plot_num_imgs):
-        orig = Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
-        task = Image.fromarray(task_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
-        comp = Image.fromarray(completed_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
-
-        combined_image.paste(orig, (i*128, 0))
-        combined_image.paste(task, (i*128, 128))
-        combined_image.paste(comp, (i*128, 256))
-
-    save_path = osp.join(save_dir, 'combined.png')
-    combined_image.save(save_path)
-    print(f"Saved combined image to {save_path}")
-
-
-def plot_samples(args, model, device):
-    if args.mode == 'plot_samples':
-        ckpt = torch.load(osp.join(args.root, 'ckpt.tar'), map_location=device)
-        model.load_state_dict(ckpt['model'])
-
-    eval_ds = CelebA(train=True)
-    torch.manual_seed(args.plot_seed)
-    rand_ids = torch.randperm(len(eval_ds))[:args.plot_num_imgs]
-    test_data = [eval_ds[i][0] for i in rand_ids]
-    test_data = torch.stack(test_data, dim=0).to(device)
-
-    list_num_ctx = [10, 20, 50, 100, 150]
-    batches = [img_to_task(test_data, max_num_points=None, num_ctx=i, target_all=True) for i in list_num_ctx]
-    all_samples = []
-    
-    model.eval()
-    with torch.no_grad():
-        for batch in batches:
+    for num_ctx in list_num_ctx:
+        batch = img_to_task(test_data, max_num_points=None, num_ctx=num_ctx, target_all=True)
+        model.eval()
+        with torch.no_grad():
             if args.model in ["np", "anp", "bnp", "banp", "tnpa", "tnpnd"]:
-                samples = model.sample(batch['xc'], batch['yc'], batch['xt'], num_samples=args.eval_num_samples)
+                outs = model.predict(batch['xc'], batch['yc'], batch['xt'], num_samples=args.plot_num_samples)
             else:
-                samples = model.sample(batch['xc'], batch['yc'], batch['xt'])
-            all_samples.append(samples)
+                outs = model.predict(batch['xc'], batch['yc'], batch['xt'])
 
-    save_dir = osp.join(args.root, 'sample_plots')
-    os.makedirs(save_dir, exist_ok=True)
+        mean = outs.mean
+        # shape: (num_samples, 1, num_points, 1)
+        if mean.dim() == 4:
+            mean = mean.mean(dim=0)
 
-    # save original images
-    _, orig_img = task_to_img(batches[-1].xc, batches[-1].yc, batches[-1].xt, batches[-1].yt, shape=(3,32,32)) # (num_imgs, 32, 32, 3)
-    orig_img = (orig_img * 255).int().cpu().numpy().transpose(0,2,3,1)
-    for i in range(args.plot_num_imgs):
-        Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_orig.jpg' % (i+1))
-    
-    for i in range(len(list_num_ctx)):
-        num_ctx = list_num_ctx[i]
-        batch = batches[i]
-        samples = all_samples[i]
+        task_img, completed_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], mean, shape=(3,32,32))
+        _, orig_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], batch['yt'], shape=(3,32,32))
 
-        for j in range(args.eval_num_samples):
-            task_img, completed_img = task_to_img(batch['xc'], batch['yc'], batch['xt'], samples[j], shape=(3,32,32)) # (num_imgs, 32, 32, 3)
+        task_img = (task_img * 255).int().cpu().numpy().transpose(0,2,3,1)
+        completed_img = (completed_img * 255).int().cpu().numpy().transpose(0,2,3,1)
+        orig_img = (orig_img * 255).int().cpu().numpy().transpose(0,2,3,1)
 
-            task_img = (task_img * 255).int().cpu().numpy().transpose(0,2,3,1)
-            completed_img = (completed_img * 255).int().cpu().numpy().transpose(0,2,3,1)
+        save_dir = osp.join(args.root, 'plots')
+        os.makedirs(save_dir, exist_ok=True)
 
-            for k in range(args.plot_num_imgs):
-                Image.fromarray(task_img[k].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_task_%d_ctx.jpg' % (k+1, num_ctx))
-                Image.fromarray(completed_img[k].astype(np.uint8)).resize((128,128),Image.BILINEAR).save(save_dir + '/%d_completed_%d_ctx_%d_samples.jpg' % (k+1, num_ctx, j+1))
+        # Combine images
+        width = args.plot_num_imgs * 128
+        height = 3 * 128
+        combined_image = Image.new('RGB', (width, height))
+
+        for i in range(args.plot_num_imgs):
+            orig = Image.fromarray(orig_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+            task = Image.fromarray(task_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+            comp = Image.fromarray(completed_img[i].astype(np.uint8)).resize((128,128),Image.BILINEAR)
+
+            combined_image.paste(orig, (i*128, 0))
+            combined_image.paste(task, (i*128, 128))
+            combined_image.paste(comp, (i*128, 256))
+
+        save_path = osp.join(save_dir, f'combined_{num_ctx}_ctx.png')
+        combined_image.save(save_path)
+        print(f"Saved combined image for {num_ctx} to {save_path}")
 
 if __name__ == '__main__':
     main()
