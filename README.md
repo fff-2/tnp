@@ -108,6 +108,7 @@ To evaluate a specific experiment:
 ```bash
 ./scripts/eval/eval_gp.sh --expid 20260212-2030
 ```
+<img width="100%" src="./assets/emnist.png">
 
 ### Resuming Training
 
@@ -129,6 +130,8 @@ W&B is initialized automatically during training. Configure via:
 | `--wandb-entity` | W&B team/user | `None` |
 
 Run `wandb login` before first use.
+
+<img width="100%" src="./assets/wb.png">
 
 ## Acknowledgement
 

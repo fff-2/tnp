@@ -117,6 +117,16 @@ python -m data.celeba
 
 The eval script runs `eval_all_metrics` followed by `plot` to save figures. If `--expid` is not specified, the latest experiment is used automatically. If evaluating for the first time, evaluation data will be generated and saved in `evalsets/celeba`.
 
+20 ctx
+<img width="100%" src="../assets/celeba_20_ctx.png">
+100 ctx
+<img width="100%" src="../assets/celeba_100_ctx.png">
+200 ctx
+<img width="100%" src="../assets/celeba_200_ctx.png">
+400 ctx
+<img width="100%" src="../assets/celeba_400_ctx.png">
+800 ctx
+<img width="100%" src="../assets/celeba_800_ctx.png">
 ---
 
 ## EMNIST Image Completion
@@ -136,3 +146,5 @@ If training for the first time, EMNIST training data will be automatically downl
 ```
 
 The eval script runs `eval_all_metrics` followed by `plot` to save figures. If `--expid` is not specified, the latest experiment is used automatically. If evaluating for the first time, evaluation data will be generated and saved in `evalsets/emnist`.
+
+<img width="100%" src="../assets/emnist.png">
